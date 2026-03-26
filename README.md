@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server that dynamically exposes Taskfile.yml tasks as individual MCP tools, allowing AI assistants to discover and execute any task defined in your Taskfile.
 
-Built using the [mcp-go](https://github.com/mark3labs/mcp-go) library for robust MCP protocol implementation and the [go-task](https://github.com/go-task/task) library for native Taskfile.yml parsing and execution.
+Built using the official [Go MCP SDK](https://github.com/modelcontextprotocol/go-sdk) for MCP protocol implementation and the [go-task](https://github.com/go-task/task) library for native Taskfile.yml parsing and execution.
 
 ## Why
 
@@ -16,8 +16,7 @@ Built using the [mcp-go](https://github.com/mark3labs/mcp-go) library for robust
 - **Individual Task Tools**: Each task becomes its own MCP tool with proper schema
 - **Variable Schema Generation**: Automatically extracts task variables for proper parameter validation
 - **Native Task Execution**: Uses go-task library directly (no subprocess execution)
-- **MCP Protocol Compliance**: Uses mcp-go library for full MCP specification compliance
-- **High-level API**: Built with proven libraries for clean, maintainable code
+- **MCP Protocol Compliance**: Uses the official Go MCP SDK for full specification compliance
 
 ## Requirements
 
@@ -75,7 +74,7 @@ This server executes arbitrary commands defined in your Taskfile. Only use it in
 
 To modify or extend the server:
 
-1. **Server Setup**: The MCP server is created using `server.NewMCPServer()` from mcp-go
+1. **Server Setup**: The MCP server is created using `mcp.NewServer()` from the Go MCP SDK
 2. **Dynamic Discovery**: Tasks are discovered via `taskfile.Tasks.All()` from the go-task library
 3. **Tool Generation**: Each task becomes an MCP tool via `createToolForTask()`
 4. **Variable Extraction**: Task variables are automatically extracted for schema generation
@@ -91,7 +90,7 @@ To modify or extend the server:
 
 ### Key Dependencies
 
-- **[mcp-go](https://github.com/mark3labs/mcp-go)**: High-level MCP protocol implementation
+- **[Go MCP SDK](https://github.com/modelcontextprotocol/go-sdk)**: Official MCP protocol implementation
 - **[go-task](https://github.com/go-task/task)**: Native Taskfile.yml parsing and execution
 
 The server uses the go-task library's native API for both parsing and execution, ensuring maximum compatibility with Taskfile.yml features.
