@@ -166,10 +166,13 @@ func (s *TaskfileServer) createToolForTask(taskName string, taskDef *ast.Task) *
 		}
 	}
 
-	schema, _ := json.Marshal(map[string]any{
+	schema, err := json.Marshal(map[string]any{
 		"type":       "object",
 		"properties": properties,
 	})
+	if err != nil {
+		schema = []byte(`{"type":"object"}`)
+	}
 
 	return &mcp.Tool{
 		Name:        taskName,

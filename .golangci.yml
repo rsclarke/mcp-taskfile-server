@@ -9,7 +9,7 @@ linters:
     - copyloopvar
     - durationcheck
     - errcheck
-    #- errchkjson
+    - errchkjson
     - errname
     - errorlint
     - exptostd
@@ -49,7 +49,6 @@ linters:
     - gosec
     - wrapcheck
   disable:
-    - errchkjson
     - godot
     - modernize
     - nilerr
