@@ -34,7 +34,7 @@ linters:
     - predeclared
     - reassign
     - recvcheck
-    #- revive
+    - revive
     - rowserrcheck
     - sqlclosecheck
     #- staticcheck
@@ -49,7 +49,6 @@ linters:
     - gosec
     - wrapcheck
   disable:
-    - revive
     - staticcheck
   settings:
     errorlint:

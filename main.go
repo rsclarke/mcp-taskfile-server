@@ -1,3 +1,4 @@
+// Package main implements an MCP server that exposes Taskfile tasks as tools.
 package main
 
 import (
