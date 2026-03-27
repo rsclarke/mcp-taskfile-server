@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -110,11 +111,11 @@ func (s *TaskfileServer) createTaskHandler(taskName string) mcp.ToolHandler {
 		}
 
 		if stdoutStr != "" {
-			result.WriteString(fmt.Sprintf("\nOutput:\n%s", stdoutStr))
+			result.WriteString("\nOutput:\n" + stdoutStr)
 		}
 
 		if stderrStr != "" {
-			result.WriteString(fmt.Sprintf("\nErrors:\n%s", stderrStr))
+			result.WriteString("\nErrors:\n" + stderrStr)
 		}
 
 		return &mcp.CallToolResult{
@@ -128,7 +129,7 @@ func (s *TaskfileServer) createTaskHandler(taskName string) mcp.ToolHandler {
 func (s *TaskfileServer) createToolForTask(taskName string, taskDef *ast.Task) *mcp.Tool {
 	description := taskDef.Desc
 	if description == "" {
-		description = fmt.Sprintf("Execute task: %s", taskName)
+		description = "Execute task: " + taskName
 	}
 
 	// Collect all variables (global + task-specific)
@@ -175,7 +176,7 @@ func (s *TaskfileServer) createToolForTask(taskName string, taskDef *ast.Task) *
 // registerTasks discovers all tasks and registers them as MCP tools.
 func (s *TaskfileServer) registerTasks(mcpServer *mcp.Server) error {
 	if s.taskfile.Tasks == nil {
-		return fmt.Errorf("no tasks found in Taskfile")
+		return errors.New("no tasks found in Taskfile")
 	}
 
 	// Iterate through all tasks and register them

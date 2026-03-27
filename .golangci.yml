@@ -30,7 +30,7 @@ linters:
     - noctx
     - nolintlint
     - nosprintfhostport
-    #- perfsprint
+    - perfsprint
     - predeclared
     - reassign
     - recvcheck
@@ -49,7 +49,6 @@ linters:
     - gosec
     - wrapcheck
   disable:
-    - perfsprint
     - revive
     - staticcheck
   settings:
