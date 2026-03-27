@@ -1,0 +1,73 @@
+version: "2"
+linters:
+  enable:
+    - asciicheck
+    - bidichk
+    - bodyclose
+    - canonicalheader
+    - contextcheck
+    - copyloopvar
+    - durationcheck
+    - errcheck
+    #- errchkjson
+    - errname
+    - errorlint
+    - exptostd
+    - fatcontext
+    - gocheckcompilerdirectives
+    - gocritic
+    #- godot
+    - govet
+    - ineffassign
+    - intrange
+    - mirror
+    - misspell
+    #- modernize
+    - nakedret
+    #- nilerr
+    - nilnesserr
+    - nilnil
+    - noctx
+    - nolintlint
+    - nosprintfhostport
+    #- perfsprint
+    - predeclared
+    - reassign
+    - recvcheck
+    #- revive
+    - rowserrcheck
+    - sqlclosecheck
+    #- staticcheck
+    - thelper
+    - unconvert
+    - unparam
+    - unqueryvet
+    - unused
+    - usestdlibvars
+    - usetesting
+    - wastedassign
+    - gosec
+    - wrapcheck
+  disable:
+    - errchkjson
+    - godot
+    - modernize
+    - nilerr
+    - perfsprint
+    - revive
+    - staticcheck
+  settings:
+    errorlint:
+      errorf: true
+      asserts: true
+      comparison: true
+    revive:
+      enable-default-rules: true
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+formatters:
+  enable:
+    - gofmt
+    - gofumpt
+    - goimports

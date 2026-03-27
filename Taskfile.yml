@@ -1,0 +1,28 @@
+version: "3"
+
+tasks:
+  fmt:
+    desc: Format Go packages
+    cmds:
+      - golangci-lint fmt
+
+  lint:
+    desc: Run golangci-lint
+    cmds:
+      - golangci-lint run
+
+  fix:
+    desc: Run golangci-lint with automatic fixes
+    cmds:
+      - golangci-lint run --fix
+
+  test:
+    desc: Run tests
+    cmds:
+      - go test ./...
+
+  ci:
+    desc: Run lint and test checks
+    cmds:
+      - task: lint
+      - task: test
