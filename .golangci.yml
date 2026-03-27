@@ -24,7 +24,7 @@ linters:
     - misspell
     - modernize
     - nakedret
-    #- nilerr
+    - nilerr
     - nilnesserr
     - nilnil
     - noctx
@@ -49,7 +49,6 @@ linters:
     - gosec
     - wrapcheck
   disable:
-    - nilerr
     - perfsprint
     - revive
     - staticcheck

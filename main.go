@@ -94,7 +94,7 @@ func (s *TaskfileServer) createTaskHandler(taskName string) mcp.ToolHandler {
 		}
 
 		// Execute the task
-		err := executor.Run(ctx, call)
+		taskErr := executor.Run(ctx, call)
 
 		// Collect output
 		stdoutStr := stdout.String()
@@ -103,8 +103,8 @@ func (s *TaskfileServer) createTaskHandler(taskName string) mcp.ToolHandler {
 		// Build result message
 		var result strings.Builder
 
-		if err != nil {
-			result.WriteString(fmt.Sprintf("Task '%s' failed with error: %v\n", taskName, err))
+		if taskErr != nil {
+			result.WriteString(fmt.Sprintf("Task '%s' failed with error: %v\n", taskName, taskErr))
 		} else {
 			result.WriteString(fmt.Sprintf("Task '%s' completed successfully.\n", taskName))
 		}
@@ -117,15 +117,9 @@ func (s *TaskfileServer) createTaskHandler(taskName string) mcp.ToolHandler {
 			result.WriteString(fmt.Sprintf("\nErrors:\n%s", stderrStr))
 		}
 
-		if err != nil {
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: result.String()}},
-				IsError: true,
-			}, nil
-		}
-
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: result.String()}},
+			IsError: taskErr != nil,
 		}, nil
 	}
 }
