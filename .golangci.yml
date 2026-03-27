@@ -37,7 +37,7 @@ linters:
     - revive
     - rowserrcheck
     - sqlclosecheck
-    #- staticcheck
+    - staticcheck
     - thelper
     - unconvert
     - unparam
@@ -48,8 +48,6 @@ linters:
     - wastedassign
     - gosec
     - wrapcheck
-  disable:
-    - staticcheck
   settings:
     errorlint:
       errorf: true

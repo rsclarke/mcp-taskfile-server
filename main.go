@@ -106,9 +106,9 @@ func (s *TaskfileServer) createTaskHandler(taskName string) mcp.ToolHandler {
 		var result strings.Builder
 
 		if taskErr != nil {
-			result.WriteString(fmt.Sprintf("Task '%s' failed with error: %v\n", taskName, taskErr))
+			fmt.Fprintf(&result, "Task '%s' failed with error: %v\n", taskName, taskErr)
 		} else {
-			result.WriteString(fmt.Sprintf("Task '%s' completed successfully.\n", taskName))
+			fmt.Fprintf(&result, "Task '%s' completed successfully.\n", taskName)
 		}
 
 		if stdoutStr != "" {
