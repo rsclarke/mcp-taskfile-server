@@ -13,14 +13,14 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// TaskfileServer represents our MCP server for Taskfile.yml
+// TaskfileServer represents our MCP server for Taskfile.yml.
 type TaskfileServer struct {
 	executor *task.Executor
 	taskfile *ast.Taskfile
 	workdir  string
 }
 
-// NewTaskfileServer creates a new Taskfile MCP server
+// NewTaskfileServer creates a new Taskfile MCP server.
 func NewTaskfileServer() (*TaskfileServer, error) {
 	workdir, err := os.Getwd()
 	if err != nil {
@@ -45,7 +45,7 @@ func NewTaskfileServer() (*TaskfileServer, error) {
 	}, nil
 }
 
-// createTaskHandler creates a handler function for a specific task
+// createTaskHandler creates a handler function for a specific task.
 func (s *TaskfileServer) createTaskHandler(taskName string) mcp.ToolHandler {
 	return func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		// Extract variables from request arguments
@@ -129,7 +129,7 @@ func (s *TaskfileServer) createTaskHandler(taskName string) mcp.ToolHandler {
 	}
 }
 
-// createToolForTask creates an MCP tool definition for a given task
+// createToolForTask creates an MCP tool definition for a given task.
 func (s *TaskfileServer) createToolForTask(taskName string, taskDef *ast.Task) *mcp.Tool {
 	description := taskDef.Desc
 	if description == "" {
@@ -181,7 +181,7 @@ func (s *TaskfileServer) createToolForTask(taskName string, taskDef *ast.Task) *
 	}
 }
 
-// registerTasks discovers all tasks and registers them as MCP tools
+// registerTasks discovers all tasks and registers them as MCP tools.
 func (s *TaskfileServer) registerTasks(mcpServer *mcp.Server) error {
 	if s.taskfile.Tasks == nil {
 		return fmt.Errorf("no tasks found in Taskfile")

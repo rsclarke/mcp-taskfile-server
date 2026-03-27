@@ -16,7 +16,7 @@ linters:
     - fatcontext
     - gocheckcompilerdirectives
     - gocritic
-    #- godot
+    - godot
     - govet
     - ineffassign
     - intrange
@@ -49,7 +49,6 @@ linters:
     - gosec
     - wrapcheck
   disable:
-    - godot
     - modernize
     - nilerr
     - perfsprint
