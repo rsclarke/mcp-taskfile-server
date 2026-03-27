@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"strings"
 
@@ -141,16 +142,12 @@ func (s *TaskfileServer) createToolForTask(taskName string, taskDef *ast.Task) *
 
 	// Add global variables first
 	if s.taskfile.Vars != nil && s.taskfile.Vars.Len() > 0 {
-		for varName, varDef := range s.taskfile.Vars.All() {
-			allVars[varName] = varDef
-		}
+		maps.Insert(allVars, s.taskfile.Vars.All())
 	}
 
 	// Add task-specific variables (these override global ones)
 	if taskDef.Vars != nil && taskDef.Vars.Len() > 0 {
-		for varName, varDef := range taskDef.Vars.All() {
-			allVars[varName] = varDef
-		}
+		maps.Insert(allVars, taskDef.Vars.All())
 	}
 
 	// Build JSON Schema properties for all variables

@@ -22,7 +22,7 @@ linters:
     - intrange
     - mirror
     - misspell
-    #- modernize
+    - modernize
     - nakedret
     #- nilerr
     - nilnesserr
@@ -49,7 +49,6 @@ linters:
     - gosec
     - wrapcheck
   disable:
-    - modernize
     - nilerr
     - perfsprint
     - revive
