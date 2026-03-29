@@ -182,8 +182,8 @@ func (s *TaskfileServer) registerTasks(mcpServer *mcp.Server) error {
 
 	// Iterate through all tasks and register them
 	for taskName, taskDef := range s.taskfile.Tasks.All(nil) {
-		// Skip internal tasks (starting with :)
-		if strings.HasPrefix(taskName, ":") {
+		// Skip internal tasks
+		if taskDef.Internal {
 			continue
 		}
 
