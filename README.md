@@ -46,15 +46,54 @@ Each tool automatically includes:
 - **Task-specific variables**: Extracted from the task definition with proper defaults
 - **Proper descriptions**: Uses task descriptions from Taskfile.yml
 
+## Tool Name Mapping
+
+Taskfile task names can contain characters (`:`, `*`) that are invalid in MCP tool names. The server automatically sanitizes task names to conform to the [MCP tool name specification](https://modelcontextprotocol.io/specification/2025-11-25/server/tools) (`[a-zA-Z0-9_.-]`).
+
+### Naming Rules
+
+| Transformation | Example task name | MCP tool name |
+|---|---|---|
+| Colons → underscores | `db:migrate` | `db_migrate` |
+| Namespace (includes) | `docs:serve` | `docs_serve` |
+| Deep namespacing | `uv:run:dev:lint-imports` | `uv_run_dev_lint-imports` |
+| Leading dot preserved | `uv:.venv` | `uv_.venv` |
+| Single wildcard | `start:*` | `start` |
+| Multiple wildcards | `deploy:*:*` | `deploy` |
+| Mixed namespace + wildcard | `uv:add:*` | `uv_add` |
+
+When the tool name differs from the original task name, the original is included in the tool description for discoverability.
+
+### Wildcard Tasks
+
+Taskfile [wildcard tasks](https://taskfile.dev/docs/guide#wildcard-arguments) (e.g. `start:*`) are exposed as tools with a required `MATCH` parameter. The server reconstructs the full task name at invocation time.
+
+For a task defined as `start:*`, calling the tool:
+
+```json
+{"name": "start", "arguments": {"MATCH": "web"}}
+```
+
+executes `task start:web`.
+
+For tasks with multiple wildcards (e.g. `deploy:*:*`), provide comma-separated values:
+
+```json
+{"name": "deploy", "arguments": {"MATCH": "api,production"}}
+```
+
+executes `task deploy:api:production`.
+
 ## MCP Integration
 
 This server implements the Model Context Protocol and can be used with any MCP-compatible client or AI assistant. The server:
 
 1. **Dynamically discovers** all tasks from Taskfile.yml at startup
-2. **Exposes each task** as an individual MCP tool with proper JSON schema
-3. **Automatically extracts** task variables for parameter validation
-4. **Executes tasks natively** using the go-task library (no subprocess calls)
-5. **Provides comprehensive** error handling and feedback
+2. **Sanitizes task names** into valid MCP tool names for strict client compatibility
+3. **Exposes each task** as an individual MCP tool with proper JSON schema
+4. **Automatically extracts** task variables for parameter validation
+5. **Executes tasks natively** using the go-task library (no subprocess calls)
+6. **Provides comprehensive** error handling and feedback
 
 ## Error Handling
 
