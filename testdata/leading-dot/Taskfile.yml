@@ -1,0 +1,7 @@
+version: "3"
+
+tasks:
+  uv:.venv:
+    desc: Create virtual environment
+    cmds:
+      - echo "creating venv"

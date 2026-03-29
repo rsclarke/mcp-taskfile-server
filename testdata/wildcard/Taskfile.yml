@@ -1,0 +1,17 @@
+version: "3"
+
+tasks:
+  start:*:
+    desc: Start a service
+    vars:
+      SERVICE: "{{index .MATCH 0}}"
+    cmds:
+      - echo "Starting {{.SERVICE}}"
+
+  deploy:*:*:
+    desc: Deploy a service to an environment
+    vars:
+      SERVICE: "{{index .MATCH 0}}"
+      ENV: "{{index .MATCH 1}}"
+    cmds:
+      - echo "Deploying {{.SERVICE}} to {{.ENV}}"

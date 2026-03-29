@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/go-task/task/v3"
@@ -172,6 +174,176 @@ func TestRegisterTasks_SkipsInternal(t *testing.T) {
 	}
 }
 
+func TestSanitizeToolName(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"greet", "greet"},
+		{"build", "build"},
+		{"db:migrate", "db_migrate"},
+		{"uv:run", "uv_run"},
+		{"uv:run:dev:lint-imports", "uv_run_dev_lint-imports"},
+		{"uv:.venv", "uv_.venv"},
+		{"start:*", "start"},
+		{"deploy:*:*", "deploy"},
+		{"uv:add:*", "uv_add"},
+		{"docs:serve", "docs_serve"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := sanitizeToolName(tt.input)
+			if got != tt.want {
+				t.Errorf("sanitizeToolName(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCreateToolForTask_Namespaced(t *testing.T) {
+	s := loadServerFromFixture(t, "namespaced")
+
+	tests := []struct {
+		taskName string
+		wantTool string
+		wantDesc string
+	}{
+		{"db:migrate", "db_migrate", "Run database migrations (task: db:migrate)"},
+		{"uv:run", "uv_run", "Run with uv (task: uv:run)"},
+		{"uv:run:dev:lint-imports", "uv_run_dev_lint-imports", "Lint imports in dev (task: uv:run:dev:lint-imports)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.taskName, func(t *testing.T) {
+			taskDef := lookupTask(t, s.taskfile, tt.taskName)
+			tool := s.createToolForTask(tt.taskName, taskDef)
+
+			if tool.Name != tt.wantTool {
+				t.Errorf("Name = %q, want %q", tool.Name, tt.wantTool)
+			}
+			if tool.Description != tt.wantDesc {
+				t.Errorf("Description = %q, want %q", tool.Description, tt.wantDesc)
+			}
+		})
+	}
+}
+
+func TestCreateToolForTask_Wildcard(t *testing.T) {
+	s := loadServerFromFixture(t, "wildcard")
+
+	t.Run("single wildcard", func(t *testing.T) {
+		taskDef := lookupTask(t, s.taskfile, "start:*")
+		tool := s.createToolForTask("start:*", taskDef)
+
+		if tool.Name != "start" {
+			t.Errorf("Name = %q, want %q", tool.Name, "start")
+		}
+
+		props := schemaProperties(t, tool)
+		if _, ok := props["MATCH"]; !ok {
+			t.Fatal("missing MATCH property for wildcard task")
+		}
+
+		required := schemaRequired(t, tool)
+		if !slices.Contains(required, "MATCH") {
+			t.Errorf("MATCH should be required, got required=%v", required)
+		}
+	})
+
+	t.Run("double wildcard", func(t *testing.T) {
+		taskDef := lookupTask(t, s.taskfile, "deploy:*:*")
+		tool := s.createToolForTask("deploy:*:*", taskDef)
+
+		if tool.Name != "deploy" {
+			t.Errorf("Name = %q, want %q", tool.Name, "deploy")
+		}
+
+		props := schemaProperties(t, tool)
+		matchProp, ok := props["MATCH"]
+		if !ok {
+			t.Fatal("missing MATCH property for wildcard task")
+		}
+
+		propMap, _ := matchProp.(map[string]any)
+		desc, _ := propMap["description"].(string)
+		if !strings.Contains(desc, "2 comma-separated") {
+			t.Errorf("MATCH description should mention 2 values, got %q", desc)
+		}
+	})
+}
+
+func TestCreateToolForTask_LeadingDot(t *testing.T) {
+	s := loadServerFromFixture(t, "leading-dot")
+
+	taskDef := lookupTask(t, s.taskfile, "uv:.venv")
+	tool := s.createToolForTask("uv:.venv", taskDef)
+
+	if tool.Name != "uv_.venv" {
+		t.Errorf("Name = %q, want %q", tool.Name, "uv_.venv")
+	}
+}
+
+func TestRegisterTasks_Namespaced(t *testing.T) {
+	s := loadServerFromFixture(t, "namespaced")
+
+	reg := &fakeRegistrar{}
+	if err := s.registerTasks(reg); err != nil {
+		t.Fatalf("registerTasks failed: %v", err)
+	}
+
+	names := make(map[string]bool)
+	for _, tool := range reg.tools {
+		names[tool.Name] = true
+	}
+
+	for _, want := range []string{"db_migrate", "uv_run", "uv_run_dev_lint-imports"} {
+		if !names[want] {
+			t.Errorf("expected registered tool %q, got tools: %v", want, names)
+		}
+	}
+}
+
+func TestRegisterTasks_Includes(t *testing.T) {
+	s := loadServerFromFixture(t, "includes")
+
+	reg := &fakeRegistrar{}
+	if err := s.registerTasks(reg); err != nil {
+		t.Fatalf("registerTasks failed: %v", err)
+	}
+
+	names := make(map[string]bool)
+	for _, tool := range reg.tools {
+		names[tool.Name] = true
+	}
+
+	for _, want := range []string{"build", "docs_serve", "docs_build"} {
+		if !names[want] {
+			t.Errorf("expected registered tool %q, got tools: %v", want, names)
+		}
+	}
+}
+
+func TestRegisterTasks_Wildcard(t *testing.T) {
+	s := loadServerFromFixture(t, "wildcard")
+
+	reg := &fakeRegistrar{}
+	if err := s.registerTasks(reg); err != nil {
+		t.Fatalf("registerTasks failed: %v", err)
+	}
+
+	names := make(map[string]bool)
+	for _, tool := range reg.tools {
+		names[tool.Name] = true
+	}
+
+	for _, want := range []string{"start", "deploy"} {
+		if !names[want] {
+			t.Errorf("expected registered tool %q, got tools: %v", want, names)
+		}
+	}
+}
+
 // lookupTask finds a task by name in the taskfile or fails the test.
 func lookupTask(t *testing.T, tf *ast.Taskfile, name string) *ast.Task {
 	t.Helper()
@@ -184,4 +356,37 @@ func lookupTask(t *testing.T, tf *ast.Taskfile, name string) *ast.Task {
 
 	t.Fatalf("task %q not found in taskfile", name)
 	return nil
+}
+
+// schemaRequired extracts the "required" array from a tool's InputSchema.
+func schemaRequired(t *testing.T, tool *mcp.Tool) []string {
+	t.Helper()
+
+	b, err := json.Marshal(tool.InputSchema)
+	if err != nil {
+		t.Fatalf("failed to marshal InputSchema: %v", err)
+	}
+
+	var schema map[string]any
+	if err := json.Unmarshal(b, &schema); err != nil {
+		t.Fatalf("failed to unmarshal InputSchema: %v", err)
+	}
+
+	rawReq, ok := schema["required"]
+	if !ok {
+		return nil
+	}
+
+	arr, ok := rawReq.([]any)
+	if !ok {
+		return nil
+	}
+
+	result := make([]string, 0, len(arr))
+	for _, v := range arr {
+		if s, ok := v.(string); ok {
+			result = append(result, s)
+		}
+	}
+	return result
 }

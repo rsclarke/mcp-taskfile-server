@@ -1,0 +1,12 @@
+version: "3"
+
+tasks:
+  serve:
+    desc: Serve documentation
+    cmds:
+      - echo "serving docs"
+
+  build:
+    desc: Build documentation
+    cmds:
+      - echo "building docs"

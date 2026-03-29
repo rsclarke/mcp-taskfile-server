@@ -1,0 +1,17 @@
+version: "3"
+
+tasks:
+  db:migrate:
+    desc: Run database migrations
+    cmds:
+      - echo "migrating"
+
+  uv:run:
+    desc: Run with uv
+    cmds:
+      - echo "running"
+
+  uv:run:dev:lint-imports:
+    desc: Lint imports in dev
+    cmds:
+      - echo "linting"
