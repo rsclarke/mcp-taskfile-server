@@ -16,6 +16,37 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// sanitizeToolName converts a Taskfile task name into a valid MCP tool name.
+// It replaces colons with underscores and strips wildcard (*) segments.
+// The returned name conforms to the MCP spec: [a-zA-Z0-9_.-]{1,128}.
+func sanitizeToolName(taskName string) string {
+	// Replace colons with underscores
+	name := strings.ReplaceAll(taskName, ":", "_")
+
+	// Remove wildcard segments ("_*" left over from ":*")
+	for strings.Contains(name, "_*") {
+		name = strings.ReplaceAll(name, "_*", "")
+	}
+
+	// Remove any remaining standalone asterisks
+	name = strings.ReplaceAll(name, "*", "")
+
+	// Trim trailing underscores left after stripping wildcards
+	name = strings.TrimRight(name, "_")
+
+	return name
+}
+
+// isWildcardTask returns true if the task name contains wildcard segments.
+func isWildcardTask(taskName string) bool {
+	return strings.Contains(taskName, "*")
+}
+
+// countWildcards returns the number of wildcard segments in a task name.
+func countWildcards(taskName string) int {
+	return strings.Count(taskName, "*")
+}
+
 // toolRegistrar is an interface for registering MCP tools, satisfied by *mcp.Server.
 type toolRegistrar interface {
 	AddTool(t *mcp.Tool, h mcp.ToolHandler)
@@ -54,7 +85,11 @@ func NewTaskfileServer() (*TaskfileServer, error) {
 }
 
 // createTaskHandler creates a handler function for a specific task.
+// For wildcard tasks, it reconstructs the full task name from the MATCH argument.
 func (s *TaskfileServer) createTaskHandler(taskName string) mcp.ToolHandler {
+	wildcard := isWildcardTask(taskName)
+	wildcardCount := countWildcards(taskName)
+
 	return func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		// Extract variables from request arguments
 		var arguments map[string]any
@@ -66,6 +101,31 @@ func (s *TaskfileServer) createTaskHandler(taskName string) mcp.ToolHandler {
 				}, nil
 			}
 		}
+
+		// Resolve the actual task name, substituting wildcards from MATCH
+		resolvedName := taskName
+		if wildcard {
+			matchVal, ok := arguments["MATCH"].(string)
+			if !ok || matchVal == "" {
+				return &mcp.CallToolResult{
+					Content: []mcp.Content{&mcp.TextContent{Text: "MATCH argument is required for wildcard tasks"}},
+					IsError: true,
+				}, nil
+			}
+			parts := strings.SplitN(matchVal, ",", wildcardCount)
+			if len(parts) != wildcardCount {
+				return &mcp.CallToolResult{
+					Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("MATCH requires %d comma-separated value(s), got %d", wildcardCount, len(parts))}},
+					IsError: true,
+				}, nil
+			}
+			resolvedName = taskName
+			for _, p := range parts {
+				resolvedName = strings.Replace(resolvedName, "*", strings.TrimSpace(p), 1)
+			}
+			delete(arguments, "MATCH")
+		}
+
 		vars := ast.NewVars()
 
 		// Add all provided arguments as variables
@@ -89,14 +149,14 @@ func (s *TaskfileServer) createTaskHandler(taskName string) mcp.ToolHandler {
 		// Setup the executor
 		if err := executor.Setup(); err != nil {
 			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Task '%s' setup failed: %v", taskName, err)}},
+				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Task '%s' setup failed: %v", resolvedName, err)}},
 				IsError: true,
 			}, nil
 		}
 
 		// Create a call for this task
 		call := &task.Call{
-			Task: taskName,
+			Task: resolvedName,
 			Vars: vars,
 		}
 
@@ -111,9 +171,9 @@ func (s *TaskfileServer) createTaskHandler(taskName string) mcp.ToolHandler {
 		var result strings.Builder
 
 		if taskErr != nil {
-			fmt.Fprintf(&result, "Task '%s' failed with error: %v\n", taskName, taskErr)
+			fmt.Fprintf(&result, "Task '%s' failed with error: %v\n", resolvedName, taskErr)
 		} else {
-			fmt.Fprintf(&result, "Task '%s' completed successfully.\n", taskName)
+			fmt.Fprintf(&result, "Task '%s' completed successfully.\n", resolvedName)
 		}
 
 		if stdoutStr != "" {
@@ -132,10 +192,17 @@ func (s *TaskfileServer) createTaskHandler(taskName string) mcp.ToolHandler {
 }
 
 // createToolForTask creates an MCP tool definition for a given task.
+// The tool name is sanitized for MCP compatibility; the description
+// references the original Taskfile task name for clarity.
 func (s *TaskfileServer) createToolForTask(taskName string, taskDef *ast.Task) *mcp.Tool {
+	toolName := sanitizeToolName(taskName)
+
 	description := taskDef.Desc
 	if description == "" {
 		description = "Execute task: " + taskName
+	}
+	if toolName != taskName {
+		description += fmt.Sprintf(" (task: %s)", taskName)
 	}
 
 	// Collect all variables (global + task-specific)
@@ -153,6 +220,8 @@ func (s *TaskfileServer) createToolForTask(taskName string, taskDef *ast.Task) *
 
 	// Build JSON Schema properties for all variables
 	properties := make(map[string]any)
+	required := []string{}
+
 	for varName, varDef := range allVars {
 		defaultValue := ""
 		if strVal, ok := varDef.Value.(string); ok {
@@ -164,16 +233,35 @@ func (s *TaskfileServer) createToolForTask(taskName string, taskDef *ast.Task) *
 		}
 	}
 
-	schema, err := json.Marshal(map[string]any{
+	// Add MATCH parameter for wildcard tasks
+	if isWildcardTask(taskName) {
+		n := countWildcards(taskName)
+		matchDesc := "Wildcard value for task pattern " + taskName
+		if n > 1 {
+			matchDesc += fmt.Sprintf(" (%d comma-separated values)", n)
+		}
+		properties["MATCH"] = map[string]any{
+			"type":        "string",
+			"description": matchDesc,
+		}
+		required = append(required, "MATCH")
+	}
+
+	schemaMap := map[string]any{
 		"type":       "object",
 		"properties": properties,
-	})
+	}
+	if len(required) > 0 {
+		schemaMap["required"] = required
+	}
+
+	schema, err := json.Marshal(schemaMap)
 	if err != nil {
 		schema = []byte(`{"type":"object"}`)
 	}
 
 	return &mcp.Tool{
-		Name:        taskName,
+		Name:        toolName,
 		Description: description,
 		InputSchema: json.RawMessage(schema),
 	}
