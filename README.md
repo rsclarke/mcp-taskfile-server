@@ -1,5 +1,7 @@
 # MCP Taskfile Server
 
+[![SafeSkill 92/100](https://img.shields.io/badge/SafeSkill-92%2F100_Verified%20Safe-brightgreen)](https://safeskill.dev/scan/rsclarke-mcp-taskfile-server)
+
 A Model Context Protocol (MCP) server that dynamically exposes Taskfile.yml tasks as individual MCP tools, allowing AI assistants to discover and execute any task defined in your Taskfile.
 
 Built using the official [Go MCP SDK](https://github.com/modelcontextprotocol/go-sdk) for MCP protocol implementation and the [go-task](https://github.com/go-task/task) library for native Taskfile.yml parsing and execution.
