@@ -1,0 +1,10 @@
+version: "3"
+
+vars:
+  APP_NAME: myapp
+
+tasks:
+  info:
+    desc: Show app info
+    cmds:
+      - echo "{{.APP_NAME}}"
