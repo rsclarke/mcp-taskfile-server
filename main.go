@@ -16,6 +16,11 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// toolRegistrar is an interface for registering MCP tools, satisfied by *mcp.Server.
+type toolRegistrar interface {
+	AddTool(t *mcp.Tool, h mcp.ToolHandler)
+}
+
 // TaskfileServer represents our MCP server for Taskfile.yml.
 type TaskfileServer struct {
 	executor *task.Executor
@@ -175,7 +180,7 @@ func (s *TaskfileServer) createToolForTask(taskName string, taskDef *ast.Task) *
 }
 
 // registerTasks discovers all tasks and registers them as MCP tools.
-func (s *TaskfileServer) registerTasks(mcpServer *mcp.Server) error {
+func (s *TaskfileServer) registerTasks(mcpServer toolRegistrar) error {
 	if s.taskfile.Tasks == nil {
 		return errors.New("no tasks found in Taskfile")
 	}
