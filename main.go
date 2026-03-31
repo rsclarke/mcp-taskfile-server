@@ -10,10 +10,13 @@ import (
 	"io/fs"
 	"log"
 	"maps"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -54,13 +57,109 @@ func countWildcards(taskName string) int {
 	return strings.Count(taskName, "*")
 }
 
-// TaskfileServer represents our MCP server for Taskfile.yml.
-type TaskfileServer struct {
+// rootState holds the per-root task executor state.
+type rootState struct {
 	executor        *task.Executor
 	taskfile        *ast.Taskfile
 	workdir         string
+	registeredTools []string
+	watcher         *fsnotify.Watcher
+}
+
+// TaskfileServer represents our MCP server for Taskfile.yml.
+type TaskfileServer struct {
+	roots           map[string]*rootState
 	mcpServer       *mcp.Server
 	registeredTools map[string]mcp.Tool
+	mu              sync.Mutex
+}
+
+// dirToURI converts an absolute directory path to a file:// URI.
+func dirToURI(dir string) string {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		abs = dir
+	}
+	return "file://" + filepath.ToSlash(abs)
+}
+
+// uriToDir converts a file:// URI back to a local directory path.
+func uriToDir(uri string) (string, error) {
+	u, err := url.Parse(uri)
+	if err != nil {
+		return "", fmt.Errorf("invalid URI %q: %w", uri, err)
+	}
+	if u.Scheme != "file" {
+		return "", fmt.Errorf("unsupported URI scheme %q (only file:// is supported)", u.Scheme)
+	}
+	return filepath.FromSlash(u.Path), nil
+}
+
+// validRootPrefixChars matches characters NOT allowed in a root prefix.
+var validRootPrefixChars = regexp.MustCompile(`[^a-zA-Z0-9_.\-]`)
+
+// sanitizeRootPrefix converts a root name or directory basename into a valid
+// MCP tool name prefix component.
+func sanitizeRootPrefix(name string) string {
+	s := validRootPrefixChars.ReplaceAllString(name, "_")
+	s = strings.Trim(s, "_")
+	if s == "" {
+		return "root"
+	}
+	return s
+}
+
+// loadRoot creates a new rootState by loading the Taskfile from the given directory.
+func loadRoot(dir string) (*rootState, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve path: %w", err)
+	}
+
+	executor := task.NewExecutor(
+		task.WithDir(abs),
+		task.WithSilent(true),
+	)
+
+	if err := executor.Setup(); err != nil {
+		return nil, fmt.Errorf("failed to setup task executor for %s: %w", abs, err)
+	}
+
+	return &rootState{
+		executor: executor,
+		taskfile: executor.Taskfile,
+		workdir:  abs,
+	}, nil
+}
+
+// unloadRoot removes and cleans up the root with the given URI.
+func (s *TaskfileServer) unloadRoot(uri string) {
+	root, ok := s.roots[uri]
+	if !ok {
+		return
+	}
+	if root.watcher != nil {
+		_ = root.watcher.Close()
+	}
+	delete(s.roots, uri)
+}
+
+// rootPrefix returns the tool name prefix for a root. When there is only one
+// root the prefix is empty; with multiple roots it is derived from the root
+// directory's basename.
+func (s *TaskfileServer) rootPrefix(root *rootState) string {
+	if len(s.roots) <= 1 {
+		return ""
+	}
+	return sanitizeRootPrefix(filepath.Base(root.workdir))
+}
+
+// prefixedToolName returns the tool name with an optional root prefix.
+func prefixedToolName(prefix, toolName string) string {
+	if prefix == "" {
+		return toolName
+	}
+	return prefix + "_" + toolName
 }
 
 // NewTaskfileServer creates a new Taskfile MCP server.
@@ -70,27 +169,21 @@ func NewTaskfileServer() (*TaskfileServer, error) {
 		return nil, fmt.Errorf("failed to get working directory: %w", err)
 	}
 
-	// Create a task executor
-	executor := task.NewExecutor(
-		task.WithDir(workdir),
-		task.WithSilent(true),
-	)
-
-	// Setup the executor (this loads the Taskfile)
-	if err := executor.Setup(); err != nil {
-		return nil, fmt.Errorf("failed to setup task executor: %w", err)
+	root, err := loadRoot(workdir)
+	if err != nil {
+		return nil, err
 	}
 
+	uri := dirToURI(workdir)
+
 	return &TaskfileServer{
-		executor: executor,
-		taskfile: executor.Taskfile,
-		workdir:  workdir,
+		roots: map[string]*rootState{uri: root},
 	}, nil
 }
 
 // createTaskHandler creates a handler function for a specific task.
 // For wildcard tasks, it reconstructs the full task name from the MATCH argument.
-func (s *TaskfileServer) createTaskHandler(taskName string) mcp.ToolHandler {
+func createTaskHandler(root *rootState, taskName string) mcp.ToolHandler {
 	wildcard := isWildcardTask(taskName)
 	wildcardCount := countWildcards(taskName)
 
@@ -144,7 +237,7 @@ func (s *TaskfileServer) createTaskHandler(taskName string) mcp.ToolHandler {
 
 		// Create a new executor with output capture for this execution
 		executor := task.NewExecutor(
-			task.WithDir(s.workdir),
+			task.WithDir(root.workdir),
 			task.WithStdout(&stdout),
 			task.WithStderr(&stderr),
 			task.WithSilent(true),
@@ -197,15 +290,16 @@ func (s *TaskfileServer) createTaskHandler(taskName string) mcp.ToolHandler {
 
 // createToolForTask creates an MCP tool definition for a given task.
 // The tool name is sanitized for MCP compatibility; the description
-// references the original Taskfile task name for clarity.
-func (s *TaskfileServer) createToolForTask(taskName string, taskDef *ast.Task) *mcp.Tool {
-	toolName := sanitizeToolName(taskName)
+// references the original Taskfile task name for clarity. The prefix
+// parameter is used in multi-root mode to namespace tool names.
+func createToolForTask(root *rootState, prefix, taskName string, taskDef *ast.Task) *mcp.Tool {
+	toolName := prefixedToolName(prefix, sanitizeToolName(taskName))
 
 	description := taskDef.Desc
 	if description == "" {
 		description = "Execute task: " + taskName
 	}
-	if toolName != taskName {
+	if sanitizeToolName(taskName) != taskName {
 		description += fmt.Sprintf(" (task: %s)", taskName)
 	}
 
@@ -213,8 +307,8 @@ func (s *TaskfileServer) createToolForTask(taskName string, taskDef *ast.Task) *
 	allVars := make(map[string]ast.Var)
 
 	// Add global variables first
-	if s.taskfile.Vars != nil && s.taskfile.Vars.Len() > 0 {
-		maps.Insert(allVars, s.taskfile.Vars.All())
+	if root.taskfile.Vars != nil && root.taskfile.Vars.Len() > 0 {
+		maps.Insert(allVars, root.taskfile.Vars.All())
 	}
 
 	// Add task-specific variables (these override global ones)
@@ -271,24 +365,41 @@ func (s *TaskfileServer) createToolForTask(taskName string, taskDef *ast.Task) *
 	}
 }
 
-// buildToolSet discovers all tasks and returns tool definitions and handlers
-// without registering them on a server.
+// buildToolSet discovers all tasks across all roots and returns tool definitions
+// and handlers without registering them on a server. It also populates each
+// root's registeredTools list.
 func (s *TaskfileServer) buildToolSet() (map[string]mcp.Tool, map[string]mcp.ToolHandler, error) {
-	if s.taskfile.Tasks == nil {
-		return nil, nil, errors.New("no tasks found in Taskfile")
-	}
-
 	tools := make(map[string]mcp.Tool)
 	handlers := make(map[string]mcp.ToolHandler)
 
-	for taskName, taskDef := range s.taskfile.Tasks.All(nil) {
-		if taskDef.Internal {
+	for _, root := range s.roots {
+		root.registeredTools = nil
+	}
+
+	for _, root := range s.roots {
+		if root.taskfile.Tasks == nil {
 			continue
 		}
 
-		tool := s.createToolForTask(taskName, taskDef)
-		tools[tool.Name] = *tool
-		handlers[tool.Name] = s.createTaskHandler(taskName)
+		prefix := s.rootPrefix(root)
+
+		for taskName, taskDef := range root.taskfile.Tasks.All(nil) {
+			if taskDef.Internal {
+				continue
+			}
+
+			tool := createToolForTask(root, prefix, taskName, taskDef)
+			if _, exists := tools[tool.Name]; exists {
+				return nil, nil, fmt.Errorf("tool name collision: %q", tool.Name)
+			}
+			tools[tool.Name] = *tool
+			handlers[tool.Name] = createTaskHandler(root, taskName)
+			root.registeredTools = append(root.registeredTools, tool.Name)
+		}
+	}
+
+	if len(tools) == 0 {
+		return nil, nil, errors.New("no tasks found in any Taskfile")
 	}
 
 	return tools, handlers, nil
@@ -351,34 +462,60 @@ func isTaskfile(path string) bool {
 	return slices.Contains(taskfile.DefaultTaskfiles, filepath.Base(path))
 }
 
-// loadAndRegisterTools re-creates the task executor from the working
-// directory and syncs the MCP tool set to match the current Taskfile
-// definitions.
-func (s *TaskfileServer) loadAndRegisterTools() error {
+// reloadRoot re-creates the task executor for a given root URI and syncs
+// the global MCP tool set.
+func (s *TaskfileServer) reloadRoot(uri string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	root, ok := s.roots[uri]
+	if !ok {
+		return fmt.Errorf("unknown root %q", uri)
+	}
+
 	executor := task.NewExecutor(
-		task.WithDir(s.workdir),
+		task.WithDir(root.workdir),
 		task.WithSilent(true),
 	)
 	if err := executor.Setup(); err != nil {
-		return fmt.Errorf("failed to setup task executor: %w", err)
+		return fmt.Errorf("failed to setup task executor for %s: %w", root.workdir, err)
 	}
-	s.executor = executor
-	s.taskfile = executor.Taskfile
+	root.executor = executor
+	root.taskfile = executor.Taskfile
 	return s.syncTools()
 }
 
-// watchTaskfiles watches the working directory tree for Taskfile changes
-// and reloads tools when a relevant file is modified. It blocks until the
-// context is cancelled.
-func (s *TaskfileServer) watchTaskfiles(ctx context.Context) error {
+// loadAndRegisterTools re-creates the task executor from the single root
+// working directory and syncs the MCP tool set. This is a convenience
+// wrapper for the single-root case.
+func (s *TaskfileServer) loadAndRegisterTools() error {
+	for uri := range s.roots {
+		return s.reloadRoot(uri)
+	}
+	return errors.New("no roots configured")
+}
+
+// watchRootTaskfiles watches a single root's directory tree for Taskfile
+// changes and reloads tools when a relevant file is modified.
+func (s *TaskfileServer) watchRootTaskfiles(ctx context.Context, uri string, root *rootState) error {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return fmt.Errorf("failed to create file watcher: %w", err)
 	}
-	defer func() { _ = watcher.Close() }()
 
-	// Recursively add all directories under workdir.
-	err = filepath.WalkDir(s.workdir, func(path string, d fs.DirEntry, err error) error {
+	s.mu.Lock()
+	root.watcher = watcher
+	s.mu.Unlock()
+
+	defer func() {
+		_ = watcher.Close()
+		s.mu.Lock()
+		root.watcher = nil
+		s.mu.Unlock()
+	}()
+
+	// Recursively add all directories under the root's workdir.
+	err = filepath.WalkDir(root.workdir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -422,8 +559,8 @@ func (s *TaskfileServer) watchTaskfiles(ctx context.Context) error {
 				timer.Stop()
 			}
 			timer = time.AfterFunc(debounce, func() {
-				if err := s.loadAndRegisterTools(); err != nil {
-					log.Printf("failed to reload tools: %v", err)
+				if err := s.reloadRoot(uri); err != nil {
+					log.Printf("failed to reload tools for root %s: %v", uri, err)
 				}
 			})
 		case err, ok := <-watcher.Errors:
@@ -433,6 +570,25 @@ func (s *TaskfileServer) watchTaskfiles(ctx context.Context) error {
 			log.Printf("file watcher error: %v", err)
 		}
 	}
+}
+
+// watchTaskfiles starts file watchers for all roots and blocks until the
+// context is cancelled.
+func (s *TaskfileServer) watchTaskfiles(ctx context.Context) error {
+	var wg sync.WaitGroup
+	var firstErr error
+	var errOnce sync.Once
+
+	for uri, root := range s.roots {
+		wg.Go(func() {
+			if err := s.watchRootTaskfiles(ctx, uri, root); err != nil {
+				errOnce.Do(func() { firstErr = err })
+			}
+		})
+	}
+
+	wg.Wait()
+	return firstErr
 }
 
 func run() error {

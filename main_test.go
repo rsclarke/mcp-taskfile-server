@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-task/task/v3"
 	"github.com/go-task/task/v3/taskfile/ast"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -25,19 +24,27 @@ func loadServerFromFixture(t *testing.T, name string) *TaskfileServer {
 	_, filename, _, _ := runtime.Caller(0)
 	dir := filepath.Join(filepath.Dir(filename), "testdata", name)
 
-	executor := task.NewExecutor(
-		task.WithDir(dir),
-		task.WithSilent(true),
-	)
-
-	if err := executor.Setup(); err != nil {
-		t.Fatalf("failed to setup executor for fixture %q: %v", name, err)
+	root, err := loadRoot(dir)
+	if err != nil {
+		t.Fatalf("failed to load root for fixture %q: %v", name, err)
 	}
 
+	uri := dirToURI(dir)
 	return &TaskfileServer{
-		taskfile: executor.Taskfile,
-		workdir:  dir,
+		roots: map[string]*rootState{uri: root},
 	}
+}
+
+// onlyRoot returns the single rootState from a server, or fails the test.
+func onlyRoot(t *testing.T, s *TaskfileServer) *rootState {
+	t.Helper()
+	if len(s.roots) != 1 {
+		t.Fatalf("expected 1 root, got %d", len(s.roots))
+	}
+	for _, root := range s.roots {
+		return root
+	}
+	return nil
 }
 
 // newTestServer creates a TaskfileServer from a fixture with a real *mcp.Server attached.
@@ -70,9 +77,10 @@ func schemaProperties(t *testing.T, tool *mcp.Tool) map[string]any {
 
 func TestCreateToolForTask_Basic(t *testing.T) {
 	s := loadServerFromFixture(t, "basic")
+	root := onlyRoot(t, s)
 
-	taskDef := lookupTask(t, s.taskfile, "greet")
-	tool := s.createToolForTask("greet", taskDef)
+	taskDef := lookupTask(t, root.taskfile, "greet")
+	tool := createToolForTask(root, "", "greet", taskDef)
 
 	if tool.Name != "greet" {
 		t.Errorf("Name = %q, want %q", tool.Name, "greet")
@@ -89,9 +97,10 @@ func TestCreateToolForTask_Basic(t *testing.T) {
 
 func TestCreateToolForTask_NoDescription(t *testing.T) {
 	s := loadServerFromFixture(t, "no-desc")
+	root := onlyRoot(t, s)
 
-	taskDef := lookupTask(t, s.taskfile, "build")
-	tool := s.createToolForTask("build", taskDef)
+	taskDef := lookupTask(t, root.taskfile, "build")
+	tool := createToolForTask(root, "", "build", taskDef)
 
 	want := "Execute task: build"
 	if tool.Description != want {
@@ -101,9 +110,10 @@ func TestCreateToolForTask_NoDescription(t *testing.T) {
 
 func TestCreateToolForTask_TaskVars(t *testing.T) {
 	s := loadServerFromFixture(t, "task-vars")
+	root := onlyRoot(t, s)
 
-	taskDef := lookupTask(t, s.taskfile, "deploy")
-	tool := s.createToolForTask("deploy", taskDef)
+	taskDef := lookupTask(t, root.taskfile, "deploy")
+	tool := createToolForTask(root, "", "deploy", taskDef)
 
 	props := schemaProperties(t, tool)
 	if len(props) != 2 {
@@ -125,9 +135,10 @@ func TestCreateToolForTask_TaskVars(t *testing.T) {
 
 func TestCreateToolForTask_GlobalVars(t *testing.T) {
 	s := loadServerFromFixture(t, "global-vars")
+	root := onlyRoot(t, s)
 
-	taskDef := lookupTask(t, s.taskfile, "info")
-	tool := s.createToolForTask("info", taskDef)
+	taskDef := lookupTask(t, root.taskfile, "info")
+	tool := createToolForTask(root, "", "info", taskDef)
 
 	props := schemaProperties(t, tool)
 	prop, ok := props["APP_NAME"]
@@ -144,9 +155,10 @@ func TestCreateToolForTask_GlobalVars(t *testing.T) {
 
 func TestCreateToolForTask_OverrideVars(t *testing.T) {
 	s := loadServerFromFixture(t, "override-vars")
+	root := onlyRoot(t, s)
 
-	taskDef := lookupTask(t, s.taskfile, "deploy")
-	tool := s.createToolForTask("deploy", taskDef)
+	taskDef := lookupTask(t, root.taskfile, "deploy")
+	tool := createToolForTask(root, "", "deploy", taskDef)
 
 	props := schemaProperties(t, tool)
 	prop, ok := props["ENV"]
@@ -223,6 +235,7 @@ func TestSanitizeToolName(t *testing.T) {
 
 func TestCreateToolForTask_Namespaced(t *testing.T) {
 	s := loadServerFromFixture(t, "namespaced")
+	root := onlyRoot(t, s)
 
 	tests := []struct {
 		taskName string
@@ -236,8 +249,8 @@ func TestCreateToolForTask_Namespaced(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.taskName, func(t *testing.T) {
-			taskDef := lookupTask(t, s.taskfile, tt.taskName)
-			tool := s.createToolForTask(tt.taskName, taskDef)
+			taskDef := lookupTask(t, root.taskfile, tt.taskName)
+			tool := createToolForTask(root, "", tt.taskName, taskDef)
 
 			if tool.Name != tt.wantTool {
 				t.Errorf("Name = %q, want %q", tool.Name, tt.wantTool)
@@ -251,10 +264,11 @@ func TestCreateToolForTask_Namespaced(t *testing.T) {
 
 func TestCreateToolForTask_Wildcard(t *testing.T) {
 	s := loadServerFromFixture(t, "wildcard")
+	root := onlyRoot(t, s)
 
 	t.Run("single wildcard", func(t *testing.T) {
-		taskDef := lookupTask(t, s.taskfile, "start:*")
-		tool := s.createToolForTask("start:*", taskDef)
+		taskDef := lookupTask(t, root.taskfile, "start:*")
+		tool := createToolForTask(root, "", "start:*", taskDef)
 
 		if tool.Name != "start" {
 			t.Errorf("Name = %q, want %q", tool.Name, "start")
@@ -272,8 +286,8 @@ func TestCreateToolForTask_Wildcard(t *testing.T) {
 	})
 
 	t.Run("double wildcard", func(t *testing.T) {
-		taskDef := lookupTask(t, s.taskfile, "deploy:*:*")
-		tool := s.createToolForTask("deploy:*:*", taskDef)
+		taskDef := lookupTask(t, root.taskfile, "deploy:*:*")
+		tool := createToolForTask(root, "", "deploy:*:*", taskDef)
 
 		if tool.Name != "deploy" {
 			t.Errorf("Name = %q, want %q", tool.Name, "deploy")
@@ -295,9 +309,10 @@ func TestCreateToolForTask_Wildcard(t *testing.T) {
 
 func TestCreateToolForTask_LeadingDot(t *testing.T) {
 	s := loadServerFromFixture(t, "leading-dot")
+	root := onlyRoot(t, s)
 
-	taskDef := lookupTask(t, s.taskfile, "uv:.venv")
-	tool := s.createToolForTask("uv:.venv", taskDef)
+	taskDef := lookupTask(t, root.taskfile, "uv:.venv")
+	tool := createToolForTask(root, "", "uv:.venv", taskDef)
 
 	if tool.Name != "uv_.venv" {
 		t.Errorf("Name = %q, want %q", tool.Name, "uv_.venv")
@@ -473,6 +488,116 @@ func TestIsTaskfile(t *testing.T) {
 	}
 }
 
+func TestDirToURI(t *testing.T) {
+	uri := dirToURI("/some/path")
+	if uri != "file:///some/path" {
+		t.Errorf("dirToURI(%q) = %q, want %q", "/some/path", uri, "file:///some/path")
+	}
+}
+
+func TestURIToDir(t *testing.T) {
+	dir, err := uriToDir("file:///some/path")
+	if err != nil {
+		t.Fatalf("uriToDir failed: %v", err)
+	}
+	if dir != "/some/path" {
+		t.Errorf("uriToDir = %q, want %q", dir, "/some/path")
+	}
+
+	_, err = uriToDir("https://example.com")
+	if err == nil {
+		t.Error("expected error for non-file URI")
+	}
+}
+
+func TestSanitizeRootPrefix(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"myproject", "myproject"},
+		{"my project", "my_project"},
+		{"my/project", "my_project"},
+		{"___", "root"},
+		{"", "root"},
+		{"a-b.c_d", "a-b.c_d"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := sanitizeRootPrefix(tt.input)
+			if got != tt.want {
+				t.Errorf("sanitizeRootPrefix(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUnloadRoot(t *testing.T) {
+	s := newTestServer(t, "basic")
+	if err := s.syncTools(); err != nil {
+		t.Fatalf("syncTools failed: %v", err)
+	}
+	if len(s.roots) != 1 {
+		t.Fatalf("expected 1 root, got %d", len(s.roots))
+	}
+
+	var uri string
+	for u := range s.roots {
+		uri = u
+	}
+
+	s.unloadRoot(uri)
+	if len(s.roots) != 0 {
+		t.Errorf("expected 0 roots after unload, got %d", len(s.roots))
+	}
+
+	// Unloading a non-existent root should be a no-op.
+	s.unloadRoot("file:///nonexistent")
+}
+
+func TestMultiRoot_Prefixing(t *testing.T) {
+	s := loadServerFromFixture(t, "basic")
+	s.mcpServer = mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
+	s.registeredTools = make(map[string]mcp.Tool)
+
+	// Load a second root from a different fixture.
+	_, filename, _, _ := runtime.Caller(0)
+	dir2 := filepath.Join(filepath.Dir(filename), "testdata", "no-desc")
+	root2, err := loadRoot(dir2)
+	if err != nil {
+		t.Fatalf("loadRoot: %v", err)
+	}
+	s.roots[dirToURI(dir2)] = root2
+
+	if err := s.syncTools(); err != nil {
+		t.Fatalf("syncTools failed: %v", err)
+	}
+
+	// With 2 roots, tools should be prefixed.
+	if len(s.registeredTools) < 2 {
+		t.Fatalf("expected at least 2 tools, got %d: %v", len(s.registeredTools), toolNames(s.registeredTools))
+	}
+
+	// Verify that no tool name is unprefixed "greet" or "build".
+	for name := range s.registeredTools {
+		if name == "greet" || name == "build" {
+			t.Errorf("expected prefixed tool name, got %q", name)
+		}
+	}
+}
+
+func TestMultiRoot_SingleRoot_NoPrefix(t *testing.T) {
+	s := newTestServer(t, "basic")
+	if err := s.syncTools(); err != nil {
+		t.Fatalf("syncTools failed: %v", err)
+	}
+
+	// Single root: no prefix.
+	if _, ok := s.registeredTools["greet"]; !ok {
+		t.Errorf("expected unprefixed tool %q, got: %v", "greet", toolNames(s.registeredTools))
+	}
+}
+
 func TestLoadAndRegisterTools(t *testing.T) {
 	s := newTestServer(t, "basic")
 
@@ -496,21 +621,7 @@ func TestWatchTaskfiles_ReloadsOnChange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Build a server pointing at the temp dir.
-	executor := task.NewExecutor(task.WithDir(dir), task.WithSilent(true))
-	if err := executor.Setup(); err != nil {
-		t.Fatalf("executor setup: %v", err)
-	}
-	s := &TaskfileServer{
-		executor:        executor,
-		taskfile:        executor.Taskfile,
-		workdir:         dir,
-		mcpServer:       mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil),
-		registeredTools: make(map[string]mcp.Tool),
-	}
-	if err := s.syncTools(); err != nil {
-		t.Fatalf("initial syncTools: %v", err)
-	}
+	s := newServerForDir(t, dir)
 	if _, ok := s.registeredTools["hello"]; !ok {
 		t.Fatal("expected initial tool 'hello'")
 	}
@@ -554,20 +665,7 @@ func TestWatchTaskfiles_IgnoresNonTaskfile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	executor := task.NewExecutor(task.WithDir(dir), task.WithSilent(true))
-	if err := executor.Setup(); err != nil {
-		t.Fatalf("executor setup: %v", err)
-	}
-	s := &TaskfileServer{
-		executor:        executor,
-		taskfile:        executor.Taskfile,
-		workdir:         dir,
-		mcpServer:       mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil),
-		registeredTools: make(map[string]mcp.Tool),
-	}
-	if err := s.syncTools(); err != nil {
-		t.Fatalf("initial syncTools: %v", err)
-	}
+	s := newServerForDir(t, dir)
 
 	ctx := t.Context()
 
@@ -597,17 +695,7 @@ func TestWatchTaskfiles_CancelStops(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	executor := task.NewExecutor(task.WithDir(dir), task.WithSilent(true))
-	if err := executor.Setup(); err != nil {
-		t.Fatalf("executor setup: %v", err)
-	}
-	s := &TaskfileServer{
-		executor:        executor,
-		taskfile:        executor.Taskfile,
-		workdir:         dir,
-		mcpServer:       mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil),
-		registeredTools: make(map[string]mcp.Tool),
-	}
+	s := newServerForDir(t, dir)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -637,14 +725,20 @@ func newTempServer(t *testing.T, taskfileContent []byte) *TaskfileServer {
 	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), taskfileContent, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	executor := task.NewExecutor(task.WithDir(dir), task.WithSilent(true))
-	if err := executor.Setup(); err != nil {
-		t.Fatalf("executor setup: %v", err)
+	return newServerForDir(t, dir)
+}
+
+// newServerForDir creates a TaskfileServer backed by a given directory,
+// with a real *mcp.Server and initial syncTools.
+func newServerForDir(t *testing.T, dir string) *TaskfileServer {
+	t.Helper()
+	root, err := loadRoot(dir)
+	if err != nil {
+		t.Fatalf("loadRoot: %v", err)
 	}
+	uri := dirToURI(dir)
 	s := &TaskfileServer{
-		executor:        executor,
-		taskfile:        executor.Taskfile,
-		workdir:         dir,
+		roots:           map[string]*rootState{uri: root},
 		mcpServer:       mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil),
 		registeredTools: make(map[string]mcp.Tool),
 	}
@@ -700,7 +794,7 @@ func TestLoadAndRegisterTools_RemovesTask(t *testing.T) {
 
 	// Remove the "goodbye" task from the Taskfile.
 	updated := []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n")
-	if err := os.WriteFile(filepath.Join(s.workdir, "Taskfile.yml"), updated, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(onlyRoot(t, s).workdir, "Taskfile.yml"), updated, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -727,7 +821,7 @@ func TestLoadAndRegisterTools_UpdatesChangedTask(t *testing.T) {
 
 	// Update the task description.
 	updated := []byte("version: '3'\ntasks:\n  greet:\n    desc: Say hi there\n    cmds:\n      - echo hi there\n")
-	if err := os.WriteFile(filepath.Join(s.workdir, "Taskfile.yml"), updated, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(onlyRoot(t, s).workdir, "Taskfile.yml"), updated, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -747,6 +841,7 @@ func TestLoadAndRegisterTools_UpdatesChangedTask(t *testing.T) {
 func TestWatchTaskfiles_DebounceCoalesces(t *testing.T) {
 	initial := []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n")
 	s := newTempServer(t, initial)
+	root := onlyRoot(t, s)
 
 	// Count reloads by tracking description changes.
 	// We'll write multiple rapid updates and verify the final state
@@ -762,7 +857,7 @@ func TestWatchTaskfiles_DebounceCoalesces(t *testing.T) {
 	// Fire multiple rapid writes within the debounce window (200ms).
 	for i := range 5 {
 		content := fmt.Appendf(nil, "version: '3'\ntasks:\n  hello:\n    desc: Attempt %d\n    cmds:\n      - echo hello\n", i)
-		if err := os.WriteFile(filepath.Join(s.workdir, "Taskfile.yml"), content, 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(root.workdir, "Taskfile.yml"), content, 0o600); err != nil {
 			t.Fatal(err)
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -793,20 +888,7 @@ func TestWatchTaskfiles_NewSubdirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	executor := task.NewExecutor(task.WithDir(dir), task.WithSilent(true))
-	if err := executor.Setup(); err != nil {
-		t.Fatalf("executor setup: %v", err)
-	}
-	s := &TaskfileServer{
-		executor:        executor,
-		taskfile:        executor.Taskfile,
-		workdir:         dir,
-		mcpServer:       mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil),
-		registeredTools: make(map[string]mcp.Tool),
-	}
-	if err := s.syncTools(); err != nil {
-		t.Fatalf("initial syncTools: %v", err)
-	}
+	s := newServerForDir(t, dir)
 
 	ctx := t.Context()
 
