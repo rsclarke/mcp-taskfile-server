@@ -7,11 +7,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"log"
 	"maps"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
+	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/go-task/task/v3"
+	"github.com/go-task/task/v3/taskfile"
 	"github.com/go-task/task/v3/taskfile/ast"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -338,12 +345,101 @@ func (s *TaskfileServer) syncTools() error {
 	return nil
 }
 
-func main() {
+// isTaskfile reports whether the given path's basename matches one of the
+// supported Taskfile filenames from taskfile.DefaultTaskfiles.
+func isTaskfile(path string) bool {
+	return slices.Contains(taskfile.DefaultTaskfiles, filepath.Base(path))
+}
+
+// loadAndRegisterTools re-creates the task executor from the working
+// directory and syncs the MCP tool set to match the current Taskfile
+// definitions.
+func (s *TaskfileServer) loadAndRegisterTools() error {
+	executor := task.NewExecutor(
+		task.WithDir(s.workdir),
+		task.WithSilent(true),
+	)
+	if err := executor.Setup(); err != nil {
+		return fmt.Errorf("failed to setup task executor: %w", err)
+	}
+	s.executor = executor
+	s.taskfile = executor.Taskfile
+	return s.syncTools()
+}
+
+// watchTaskfiles watches the working directory tree for Taskfile changes
+// and reloads tools when a relevant file is modified. It blocks until the
+// context is cancelled.
+func (s *TaskfileServer) watchTaskfiles(ctx context.Context) error {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return fmt.Errorf("failed to create file watcher: %w", err)
+	}
+	defer func() { _ = watcher.Close() }()
+
+	// Recursively add all directories under workdir.
+	err = filepath.WalkDir(s.workdir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return watcher.Add(path)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to walk working directory: %w", err)
+	}
+
+	const debounce = 200 * time.Millisecond
+	var timer *time.Timer
+
+	for {
+		select {
+		case <-ctx.Done():
+			if timer != nil {
+				timer.Stop()
+			}
+			return nil
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return nil
+			}
+
+			// Watch for new directories so we stay recursive.
+			if event.Has(fsnotify.Create) {
+				if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
+					_ = watcher.Add(event.Name)
+				}
+			}
+
+			if !isTaskfile(event.Name) {
+				continue
+			}
+
+			// Debounce rapid events.
+			if timer != nil {
+				timer.Stop()
+			}
+			timer = time.AfterFunc(debounce, func() {
+				if err := s.loadAndRegisterTools(); err != nil {
+					log.Printf("failed to reload tools: %v", err)
+				}
+			})
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return nil
+			}
+			log.Printf("file watcher error: %v", err)
+		}
+	}
+}
+
+func run() error {
 	// Create taskfile server
 	taskfileServer, err := NewTaskfileServer()
 	if err != nil {
-		fmt.Printf("Failed to create taskfile server: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to create taskfile server: %w", err)
 	}
 
 	// Create MCP server
@@ -359,12 +455,28 @@ func main() {
 
 	// Register all tasks as MCP tools
 	if err := taskfileServer.syncTools(); err != nil {
-		fmt.Printf("Failed to register tasks: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to register tasks: %w", err)
 	}
 
+	// Start watching for Taskfile changes
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		if err := taskfileServer.watchTaskfiles(ctx); err != nil {
+			log.Printf("file watcher failed: %v", err)
+		}
+	}()
+
 	// Start the stdio server
-	if err := mcpServer.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
+	if err := mcpServer.Run(ctx, &mcp.StdioTransport{}); err != nil {
+		return fmt.Errorf("server error: %w", err)
+	}
+	return nil
+}
+
+func main() {
+	if err := run(); err != nil {
 		fmt.Printf("Server error: %v\n", err)
 		os.Exit(1)
 	}

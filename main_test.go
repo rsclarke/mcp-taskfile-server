@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"maps"
+	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-task/task/v3"
 	"github.com/go-task/task/v3/taskfile/ast"
@@ -440,6 +443,189 @@ func toolNames(tools map[string]mcp.Tool) []string {
 	}
 	slices.Sort(names)
 	return names
+}
+
+func TestIsTaskfile(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"Taskfile.yml", true},
+		{"taskfile.yml", true},
+		{"Taskfile.yaml", true},
+		{"taskfile.yaml", true},
+		{"Taskfile.dist.yml", true},
+		{"taskfile.dist.yml", true},
+		{"Taskfile.dist.yaml", true},
+		{"taskfile.dist.yaml", true},
+		{"/some/dir/Taskfile.yml", true},
+		{"README.md", false},
+		{"main.go", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			if got := isTaskfile(tt.path); got != tt.want {
+				t.Errorf("isTaskfile(%q) = %v, want %v", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadAndRegisterTools(t *testing.T) {
+	s := newTestServer(t, "basic")
+
+	if err := s.loadAndRegisterTools(); err != nil {
+		t.Fatalf("loadAndRegisterTools failed: %v", err)
+	}
+
+	if len(s.registeredTools) == 0 {
+		t.Fatal("expected at least one registered tool")
+	}
+	if _, ok := s.registeredTools["greet"]; !ok {
+		t.Errorf("expected tool %q, got tools: %v", "greet", toolNames(s.registeredTools))
+	}
+}
+
+func TestWatchTaskfiles_ReloadsOnChange(t *testing.T) {
+	// Create a temp directory with a minimal Taskfile.
+	dir := t.TempDir()
+	initial := []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n")
+	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), initial, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Build a server pointing at the temp dir.
+	executor := task.NewExecutor(task.WithDir(dir), task.WithSilent(true))
+	if err := executor.Setup(); err != nil {
+		t.Fatalf("executor setup: %v", err)
+	}
+	s := &TaskfileServer{
+		executor:        executor,
+		taskfile:        executor.Taskfile,
+		workdir:         dir,
+		mcpServer:       mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil),
+		registeredTools: make(map[string]mcp.Tool),
+	}
+	if err := s.syncTools(); err != nil {
+		t.Fatalf("initial syncTools: %v", err)
+	}
+	if _, ok := s.registeredTools["hello"]; !ok {
+		t.Fatal("expected initial tool 'hello'")
+	}
+
+	ctx := t.Context()
+
+	go func() {
+		_ = s.watchTaskfiles(ctx)
+	}()
+
+	// Give the watcher time to start.
+	time.Sleep(100 * time.Millisecond)
+
+	// Write an updated Taskfile with a new task.
+	updated := []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n  goodbye:\n    desc: Say goodbye\n    cmds:\n      - echo goodbye\n")
+	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), updated, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for debounce + reload.
+	deadline := time.After(2 * time.Second)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for tool reload")
+		case <-ticker.C:
+			if _, ok := s.registeredTools["goodbye"]; ok {
+				return // success
+			}
+		}
+	}
+}
+
+func TestWatchTaskfiles_IgnoresNonTaskfile(t *testing.T) {
+	dir := t.TempDir()
+	initial := []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n")
+	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), initial, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	executor := task.NewExecutor(task.WithDir(dir), task.WithSilent(true))
+	if err := executor.Setup(); err != nil {
+		t.Fatalf("executor setup: %v", err)
+	}
+	s := &TaskfileServer{
+		executor:        executor,
+		taskfile:        executor.Taskfile,
+		workdir:         dir,
+		mcpServer:       mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil),
+		registeredTools: make(map[string]mcp.Tool),
+	}
+	if err := s.syncTools(); err != nil {
+		t.Fatalf("initial syncTools: %v", err)
+	}
+
+	ctx := t.Context()
+
+	go func() {
+		_ = s.watchTaskfiles(ctx)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Write a non-Taskfile — should NOT trigger reload.
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait a bit to confirm no spurious reload.
+	time.Sleep(400 * time.Millisecond)
+
+	// Tools should remain unchanged.
+	if len(s.registeredTools) != 1 {
+		t.Errorf("expected 1 tool, got %d", len(s.registeredTools))
+	}
+}
+
+func TestWatchTaskfiles_CancelStops(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  x:\n    cmds:\n      - echo x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	executor := task.NewExecutor(task.WithDir(dir), task.WithSilent(true))
+	if err := executor.Setup(); err != nil {
+		t.Fatalf("executor setup: %v", err)
+	}
+	s := &TaskfileServer{
+		executor:        executor,
+		taskfile:        executor.Taskfile,
+		workdir:         dir,
+		mcpServer:       mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil),
+		registeredTools: make(map[string]mcp.Tool),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+
+	go func() {
+		done <- s.watchTaskfiles(ctx)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("watchTaskfiles returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("watchTaskfiles did not stop after context cancellation")
+	}
 }
 
 // schemaRequired extracts the "required" array from a tool's InputSchema.
