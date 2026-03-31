@@ -267,27 +267,56 @@ func (s *TaskfileServer) createToolForTask(taskName string, taskDef *ast.Task) *
 	}
 }
 
-// registerTasks discovers all tasks and registers them as MCP tools.
-func (s *TaskfileServer) registerTasks(mcpServer toolRegistrar) error {
+// buildToolSet discovers all tasks and returns tool definitions and handlers
+// without registering them on a server.
+func (s *TaskfileServer) buildToolSet() (map[string]mcp.Tool, map[string]mcp.ToolHandler, error) {
 	if s.taskfile.Tasks == nil {
-		return errors.New("no tasks found in Taskfile")
+		return nil, nil, errors.New("no tasks found in Taskfile")
 	}
 
-	// Iterate through all tasks and register them
+	tools := make(map[string]mcp.Tool)
+	handlers := make(map[string]mcp.ToolHandler)
+
 	for taskName, taskDef := range s.taskfile.Tasks.All(nil) {
-		// Skip internal tasks
 		if taskDef.Internal {
 			continue
 		}
 
-		// Create tool definition
 		tool := s.createToolForTask(taskName, taskDef)
+		tools[tool.Name] = *tool
+		handlers[tool.Name] = s.createTaskHandler(taskName)
+	}
 
-		// Create handler
-		handler := s.createTaskHandler(taskName)
+	return tools, handlers, nil
+}
 
-		// Register with MCP server
-		mcpServer.AddTool(tool, handler)
+// toolsEqual reports whether two tool definitions are equivalent
+// by comparing Name, Description, and InputSchema bytes.
+func toolsEqual(a, b *mcp.Tool) bool {
+	if a.Name != b.Name || a.Description != b.Description {
+		return false
+	}
+	aSchema, err := json.Marshal(a.InputSchema)
+	if err != nil {
+		return false
+	}
+	bSchema, err := json.Marshal(b.InputSchema)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(aSchema, bSchema)
+}
+
+// registerTasks discovers all tasks and registers them as MCP tools.
+func (s *TaskfileServer) registerTasks(mcpServer toolRegistrar) error {
+	tools, handlers, err := s.buildToolSet()
+	if err != nil {
+		return err
+	}
+
+	for name, tool := range tools {
+		t := tool
+		mcpServer.AddTool(&t, handlers[name])
 	}
 
 	return nil
