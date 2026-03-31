@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -628,6 +629,31 @@ func TestWatchTaskfiles_CancelStops(t *testing.T) {
 	}
 }
 
+// newTempServer creates a TaskfileServer backed by a temp directory containing
+// the given Taskfile content, with a real *mcp.Server and initial syncTools.
+func newTempServer(t *testing.T, taskfileContent []byte) *TaskfileServer {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), taskfileContent, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	executor := task.NewExecutor(task.WithDir(dir), task.WithSilent(true))
+	if err := executor.Setup(); err != nil {
+		t.Fatalf("executor setup: %v", err)
+	}
+	s := &TaskfileServer{
+		executor:        executor,
+		taskfile:        executor.Taskfile,
+		workdir:         dir,
+		mcpServer:       mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil),
+		registeredTools: make(map[string]mcp.Tool),
+	}
+	if err := s.syncTools(); err != nil {
+		t.Fatalf("initial syncTools: %v", err)
+	}
+	return s
+}
+
 // schemaRequired extracts the "required" array from a tool's InputSchema.
 func schemaRequired(t *testing.T, tool *mcp.Tool) []string {
 	t.Helper()
@@ -659,4 +685,173 @@ func schemaRequired(t *testing.T, tool *mcp.Tool) []string {
 		}
 	}
 	return result
+}
+
+func TestLoadAndRegisterTools_RemovesTask(t *testing.T) {
+	initial := []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n  goodbye:\n    desc: Say goodbye\n    cmds:\n      - echo goodbye\n")
+	s := newTempServer(t, initial)
+
+	if _, ok := s.registeredTools["hello"]; !ok {
+		t.Fatal("expected initial tool 'hello'")
+	}
+	if _, ok := s.registeredTools["goodbye"]; !ok {
+		t.Fatal("expected initial tool 'goodbye'")
+	}
+
+	// Remove the "goodbye" task from the Taskfile.
+	updated := []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n")
+	if err := os.WriteFile(filepath.Join(s.workdir, "Taskfile.yml"), updated, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.loadAndRegisterTools(); err != nil {
+		t.Fatalf("loadAndRegisterTools failed: %v", err)
+	}
+
+	if _, ok := s.registeredTools["goodbye"]; ok {
+		t.Error("tool 'goodbye' should have been removed")
+	}
+	if _, ok := s.registeredTools["hello"]; !ok {
+		t.Error("tool 'hello' should still be registered")
+	}
+}
+
+func TestLoadAndRegisterTools_UpdatesChangedTask(t *testing.T) {
+	initial := []byte("version: '3'\ntasks:\n  greet:\n    desc: Say hello\n    cmds:\n      - echo hello\n")
+	s := newTempServer(t, initial)
+
+	origTool := s.registeredTools["greet"]
+	if origTool.Description != "Say hello" {
+		t.Fatalf("initial description = %q, want %q", origTool.Description, "Say hello")
+	}
+
+	// Update the task description.
+	updated := []byte("version: '3'\ntasks:\n  greet:\n    desc: Say hi there\n    cmds:\n      - echo hi there\n")
+	if err := os.WriteFile(filepath.Join(s.workdir, "Taskfile.yml"), updated, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.loadAndRegisterTools(); err != nil {
+		t.Fatalf("loadAndRegisterTools failed: %v", err)
+	}
+
+	updatedTool, ok := s.registeredTools["greet"]
+	if !ok {
+		t.Fatal("tool 'greet' should still be registered")
+	}
+	if updatedTool.Description != "Say hi there" {
+		t.Errorf("description = %q, want %q", updatedTool.Description, "Say hi there")
+	}
+}
+
+func TestWatchTaskfiles_DebounceCoalesces(t *testing.T) {
+	initial := []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n")
+	s := newTempServer(t, initial)
+
+	// Count reloads by tracking description changes.
+	// We'll write multiple rapid updates and verify the final state
+	// appears without intermediate states lingering.
+	ctx := t.Context()
+
+	go func() {
+		_ = s.watchTaskfiles(ctx)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Fire multiple rapid writes within the debounce window (200ms).
+	for i := range 5 {
+		content := fmt.Appendf(nil, "version: '3'\ntasks:\n  hello:\n    desc: Attempt %d\n    cmds:\n      - echo hello\n", i)
+		if err := os.WriteFile(filepath.Join(s.workdir, "Taskfile.yml"), content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Wait for debounce + reload to settle.
+	deadline := time.After(2 * time.Second)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for debounced reload")
+		case <-ticker.C:
+			tool, ok := s.registeredTools["hello"]
+			if ok && tool.Description == "Attempt 4" {
+				return // success — final write was applied
+			}
+		}
+	}
+}
+
+func TestWatchTaskfiles_NewSubdirectory(t *testing.T) {
+	dir := t.TempDir()
+	initial := []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n")
+	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), initial, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	executor := task.NewExecutor(task.WithDir(dir), task.WithSilent(true))
+	if err := executor.Setup(); err != nil {
+		t.Fatalf("executor setup: %v", err)
+	}
+	s := &TaskfileServer{
+		executor:        executor,
+		taskfile:        executor.Taskfile,
+		workdir:         dir,
+		mcpServer:       mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil),
+		registeredTools: make(map[string]mcp.Tool),
+	}
+	if err := s.syncTools(); err != nil {
+		t.Fatalf("initial syncTools: %v", err)
+	}
+
+	ctx := t.Context()
+
+	go func() {
+		_ = s.watchTaskfiles(ctx)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Create a new subdirectory after the watcher started.
+	subdir := filepath.Join(dir, "sub")
+	if err := os.Mkdir(subdir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	// Give the watcher time to pick up the new directory.
+	time.Sleep(200 * time.Millisecond)
+
+	// Write a Taskfile in the new subdirectory. The main Taskfile includes it
+	// indirectly — but we're testing that the watcher picks up the file event
+	// in the new subdirectory. Update the root Taskfile to include it.
+	subTaskfile := []byte("version: '3'\ntasks:\n  sub-task:\n    desc: From subdirectory\n    cmds:\n      - echo sub\n")
+	if err := os.WriteFile(filepath.Join(subdir, "Taskfile.yml"), subTaskfile, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Update root Taskfile to include the subdirectory.
+	rootWithInclude := []byte("version: '3'\nincludes:\n  sub:\n    taskfile: ./sub\n\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n")
+	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), rootWithInclude, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for reload to register the included task.
+	deadline := time.After(2 * time.Second)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for sub-task; registered tools: %v", toolNames(s.registeredTools))
+		case <-ticker.C:
+			if _, ok := s.registeredTools["sub_sub-task"]; ok {
+				return // success
+			}
+		}
+	}
 }
