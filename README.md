@@ -16,6 +16,7 @@ Built using the official [Go MCP SDK](https://github.com/modelcontextprotocol/go
 - **Individual Task Tools**: Each task becomes its own MCP tool with proper schema
 - **Variable Schema Generation**: Automatically extracts task variables for proper parameter validation
 - **Native Task Execution**: Uses go-task library directly (no subprocess execution)
+- **Auto Reload**: Watches Taskfile.yml (and included Taskfiles) for changes and automatically re-exposes updated tools to connected clients
 - **MCP Protocol Compliance**: Uses the official Go MCP SDK for full specification compliance
 
 ## Requirements
@@ -95,6 +96,17 @@ This server implements the Model Context Protocol and can be used with any MCP-c
 5. **Executes tasks natively** using the go-task library (no subprocess calls)
 6. **Provides comprehensive** error handling and feedback
 
+## Auto Reload
+
+The server watches your Taskfile.yml and any included Taskfiles for changes using `fsnotify`. When a file is modified, added, or removed, the server automatically:
+
+1. Reloads and re-parses the Taskfile
+2. Diffs the updated task set against currently registered tools
+3. Adds new tools and removes stale ones via the MCP SDK
+4. Notifies connected clients of the change (`notifications/tools/list_changed`)
+
+File system events are debounced (~200 ms) to avoid redundant reloads during rapid edits. The watcher runs for the lifetime of the server and is cleaned up on shutdown.
+
 ## Error Handling
 
 The server handles various error conditions:
@@ -114,22 +126,27 @@ This server executes arbitrary commands defined in your Taskfile. Only use it in
 To modify or extend the server:
 
 1. **Server Setup**: The MCP server is created using `mcp.NewServer()` from the Go MCP SDK
-2. **Dynamic Discovery**: Tasks are discovered via `taskfile.Tasks.All()` from the go-task library
+2. **Dynamic Discovery**: Tasks are discovered and built into a tool set via `buildToolSet()`
 3. **Tool Generation**: Each task becomes an MCP tool via `createToolForTask()`
 4. **Variable Extraction**: Task variables are automatically extracted for schema generation
 5. **Handler Creation**: Each task gets its own handler via `createTaskHandler()`
-6. **Native Execution**: Tasks are executed using `executor.Run()` from go-task library
+6. **Tool Sync**: `syncTools()` diffs and updates registered tools; `watchTaskfiles()` triggers reloads on file changes
+7. **Native Execution**: Tasks are executed using `executor.Run()` from go-task library
 
 ### Key Components
 
 - **`NewTaskfileServer()`**: Sets up go-task executor and parses Taskfile.yml
-- **`registerTasks()`**: Discovers tasks and registers them with MCP server
+- **`buildToolSet()`**: Discovers tasks and builds the set of MCP tools and handlers
 - **`createToolForTask()`**: Generates MCP tool schema from task definition
 - **`createTaskHandler()`**: Creates execution handler for each task
+- **`syncTools()`**: Diffs current tasks against registered tools and adds/removes as needed
+- **`loadAndRegisterTools()`**: Re-initialises the executor and triggers a sync on reload
+- **`watchTaskfiles()`**: Watches Taskfile.yml and included files for changes with debounced reload
 
 ### Key Dependencies
 
 - **[Go MCP SDK](https://github.com/modelcontextprotocol/go-sdk)**: Official MCP protocol implementation
 - **[go-task](https://github.com/go-task/task)**: Native Taskfile.yml parsing and execution
+- **[fsnotify](https://github.com/fsnotify/fsnotify)**: Cross-platform file system notifications for auto reload
 
 The server uses the go-task library's native API for both parsing and execution, ensuring maximum compatibility with Taskfile.yml features.
