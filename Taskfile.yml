@@ -21,6 +21,15 @@ tasks:
     cmds:
       - go test ./...
 
+  build:
+    desc: Build the server binary
+    vars:
+      VERSION:
+        sh: git describe --tags --always --dirty 2>/dev/null || echo "dev"
+      LDFLAGS: -s -w -X main.serverVersion={{.VERSION}}
+    cmds:
+      - go build -ldflags '{{.LDFLAGS}}' -o mcp-taskfile-server .
+
   ci:
     desc: Run lint and test checks
     cmds:

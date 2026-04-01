@@ -27,6 +27,12 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// Build-time variables set via -ldflags.
+var (
+	serverName    = "mcp-taskfile-server"
+	serverVersion = "dev"
+)
+
 // sanitizeToolName converts a Taskfile task name into a valid MCP tool name.
 // It replaces colons with underscores and strips wildcard (*) segments.
 // The returned name conforms to the MCP spec: [a-zA-Z0-9_.-]{1,128}.
@@ -726,8 +732,8 @@ func run() error {
 	// Create MCP server with lifecycle handlers
 	mcpServer := mcp.NewServer(
 		&mcp.Implementation{
-			Name:    "taskfile-mcp-server",
-			Version: "1.0.0",
+			Name:    serverName,
+			Version: serverVersion,
 		},
 		&mcp.ServerOptions{
 			InitializedHandler:      taskfileServer.handleInitialized,
