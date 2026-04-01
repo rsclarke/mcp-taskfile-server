@@ -23,6 +23,7 @@ import (
 	"github.com/go-task/task/v3"
 	"github.com/go-task/task/v3/taskfile"
 	"github.com/go-task/task/v3/taskfile/ast"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -72,6 +73,7 @@ type TaskfileServer struct {
 	mcpServer       *mcp.Server
 	registeredTools map[string]mcp.Tool
 	mu              sync.Mutex
+	watchCancel     context.CancelFunc
 }
 
 // dirToURI converts an absolute directory path to a file:// URI.
@@ -163,22 +165,10 @@ func prefixedToolName(prefix, toolName string) string {
 }
 
 // NewTaskfileServer creates a new Taskfile MCP server.
-func NewTaskfileServer() (*TaskfileServer, error) {
-	workdir, err := os.Getwd()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get working directory: %w", err)
-	}
-
-	root, err := loadRoot(workdir)
-	if err != nil {
-		return nil, err
-	}
-
-	uri := dirToURI(workdir)
-
+func NewTaskfileServer() *TaskfileServer {
 	return &TaskfileServer{
-		roots: map[string]*rootState{uri: root},
-	}, nil
+		roots: make(map[string]*rootState),
+	}
 }
 
 // createTaskHandler creates a handler function for a specific task.
@@ -591,38 +581,161 @@ func (s *TaskfileServer) watchTaskfiles(ctx context.Context) error {
 	return firstErr
 }
 
-func run() error {
-	// Create taskfile server
-	taskfileServer, err := NewTaskfileServer()
+// isMethodNotFound reports whether err is a JSON-RPC "method not found" error,
+// which indicates the client does not support the requested capability.
+func isMethodNotFound(err error) bool {
+	var wireErr *jsonrpc.Error
+	return errors.As(err, &wireErr) && wireErr.Code == jsonrpc.CodeMethodNotFound
+}
+
+// restartWatchers cancels any running file watchers and starts new ones
+// for all current roots. The provided ctx should be the long-lived server
+// context from which a child context is derived.
+func (s *TaskfileServer) restartWatchers(ctx context.Context) {
+	if s.watchCancel != nil {
+		s.watchCancel()
+	}
+	watchCtx, cancel := context.WithCancel(ctx) //nolint:gosec // cancel is stored in s.watchCancel and called on next restart or shutdown
+	s.watchCancel = cancel
+	go func() {
+		if err := s.watchTaskfiles(watchCtx); err != nil {
+			log.Printf("file watcher failed: %v", err)
+		}
+	}()
+}
+
+// loadRootsFromSession queries the client for its root list and loads each
+// one. If the client does not support roots, it falls back to os.Getwd().
+func (s *TaskfileServer) loadRootsFromSession(ctx context.Context, session *mcp.ServerSession) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rootRes, err := session.ListRoots(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create taskfile server: %w", err)
+		if !isMethodNotFound(err) {
+			return fmt.Errorf("failed to list roots: %w", err)
+		}
+		// Client does not support roots; fall back to working directory.
+		workdir, wdErr := os.Getwd()
+		if wdErr != nil {
+			return fmt.Errorf("failed to get working directory: %w", wdErr)
+		}
+		uri := dirToURI(workdir)
+		root, loadErr := loadRoot(workdir)
+		if loadErr != nil {
+			return loadErr
+		}
+		s.roots[uri] = root
+		if err := s.syncTools(); err != nil {
+			return err
+		}
+		s.restartWatchers(ctx)
+		return nil
 	}
 
-	// Create MCP server
+	for _, r := range rootRes.Roots {
+		if _, exists := s.roots[r.URI]; exists {
+			continue
+		}
+		dir, parseErr := uriToDir(r.URI)
+		if parseErr != nil {
+			log.Printf("skipping root with invalid URI %q: %v", r.URI, parseErr)
+			continue
+		}
+		root, loadErr := loadRoot(dir)
+		if loadErr != nil {
+			log.Printf("failed to load root %q: %v", r.URI, loadErr)
+			continue
+		}
+		s.roots[r.URI] = root
+	}
+
+	if len(s.roots) == 0 {
+		return errors.New("no valid roots found")
+	}
+
+	if err := s.syncTools(); err != nil {
+		return err
+	}
+	s.restartWatchers(ctx)
+	return nil
+}
+
+// handleInitialized is called after the client handshake completes.
+func (s *TaskfileServer) handleInitialized(ctx context.Context, req *mcp.InitializedRequest) {
+	if err := s.loadRootsFromSession(ctx, req.Session); err != nil {
+		log.Printf("failed to initialize roots: %v", err)
+	}
+}
+
+// handleRootsChanged is called when the client sends roots/list_changed.
+func (s *TaskfileServer) handleRootsChanged(ctx context.Context, req *mcp.RootsListChangedRequest) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rootRes, err := req.Session.ListRoots(ctx, nil)
+	if err != nil {
+		log.Printf("failed to list roots after change: %v", err)
+		return
+	}
+
+	// Build a set of new URIs.
+	newURIs := make(map[string]struct{}, len(rootRes.Roots))
+	for _, r := range rootRes.Roots {
+		newURIs[r.URI] = struct{}{}
+	}
+
+	// Remove roots that are no longer present.
+	for uri := range s.roots {
+		if _, ok := newURIs[uri]; !ok {
+			s.unloadRoot(uri)
+		}
+	}
+
+	// Add roots that are new.
+	for _, r := range rootRes.Roots {
+		if _, exists := s.roots[r.URI]; exists {
+			continue
+		}
+		dir, parseErr := uriToDir(r.URI)
+		if parseErr != nil {
+			log.Printf("skipping root with invalid URI %q: %v", r.URI, parseErr)
+			continue
+		}
+		root, loadErr := loadRoot(dir)
+		if loadErr != nil {
+			log.Printf("failed to load root %q: %v", r.URI, loadErr)
+			continue
+		}
+		s.roots[r.URI] = root
+	}
+
+	if err := s.syncTools(); err != nil {
+		log.Printf("failed to sync tools after roots change: %v", err)
+	}
+	s.restartWatchers(ctx)
+}
+
+func run() error {
+	// Create taskfile server
+	taskfileServer := NewTaskfileServer()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Create MCP server with lifecycle handlers
 	mcpServer := mcp.NewServer(
 		&mcp.Implementation{
 			Name:    "taskfile-mcp-server",
 			Version: "1.0.0",
 		},
-		nil,
+		&mcp.ServerOptions{
+			InitializedHandler:      taskfileServer.handleInitialized,
+			RootsListChangedHandler: taskfileServer.handleRootsChanged,
+		},
 	)
 	taskfileServer.mcpServer = mcpServer
 	taskfileServer.registeredTools = make(map[string]mcp.Tool)
-
-	// Register all tasks as MCP tools
-	if err := taskfileServer.syncTools(); err != nil {
-		return fmt.Errorf("failed to register tasks: %w", err)
-	}
-
-	// Start watching for Taskfile changes
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go func() {
-		if err := taskfileServer.watchTaskfiles(ctx); err != nil {
-			log.Printf("file watcher failed: %v", err)
-		}
-	}()
 
 	// Start the stdio server
 	if err := mcpServer.Run(ctx, &mcp.StdioTransport{}); err != nil {

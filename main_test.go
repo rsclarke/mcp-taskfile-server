@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/go-task/task/v3/taskfile/ast"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -878,6 +880,205 @@ func TestWatchTaskfiles_DebounceCoalesces(t *testing.T) {
 				return // success — final write was applied
 			}
 		}
+	}
+}
+
+func TestHandleInitialized_WithRoots(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ts := NewTaskfileServer()
+	ctx := t.Context()
+
+	rootURI := dirToURI(dir)
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
+	client.AddRoots(&mcp.Root{URI: rootURI, Name: "test"})
+
+	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, &mcp.ServerOptions{
+		InitializedHandler:      ts.handleInitialized,
+		RootsListChangedHandler: ts.handleRootsChanged,
+	})
+	ts.mcpServer = server
+	ts.registeredTools = make(map[string]mcp.Tool)
+
+	ct, st := mcp.NewInMemoryTransports()
+	ss, err := server.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ss.Close() })
+
+	cs, err := client.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+
+	// Wait for initialization to complete.
+	deadline := time.After(2 * time.Second)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for tools to be registered via InitializedHandler")
+		case <-ticker.C:
+			ts.mu.Lock()
+			n := len(ts.registeredTools)
+			ts.mu.Unlock()
+			if n > 0 {
+				ts.mu.Lock()
+				_, ok := ts.registeredTools["hello"]
+				ts.mu.Unlock()
+				if ok {
+					goto done
+				}
+			}
+		}
+	}
+done:
+
+	ts.mu.Lock()
+	if len(ts.roots) != 1 {
+		t.Errorf("expected 1 root, got %d", len(ts.roots))
+	}
+	if _, ok := ts.roots[rootURI]; !ok {
+		t.Errorf("expected root %q", rootURI)
+	}
+	ts.mu.Unlock()
+}
+
+func TestHandleRootsChanged_AddAndRemove(t *testing.T) {
+	dir1 := t.TempDir()
+	dir2 := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir1, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  task1:\n    desc: Task one\n    cmds:\n      - echo one\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir2, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  task2:\n    desc: Task two\n    cmds:\n      - echo two\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ts := NewTaskfileServer()
+	ctx := t.Context()
+
+	uri1 := dirToURI(dir1)
+	uri2 := dirToURI(dir2)
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
+	client.AddRoots(&mcp.Root{URI: uri1, Name: "root1"})
+
+	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, &mcp.ServerOptions{
+		InitializedHandler:      ts.handleInitialized,
+		RootsListChangedHandler: ts.handleRootsChanged,
+	})
+	ts.mcpServer = server
+	ts.registeredTools = make(map[string]mcp.Tool)
+
+	ct, st := mcp.NewInMemoryTransports()
+	ss, err := server.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ss.Close() })
+
+	cs, err := client.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+
+	// Wait for initial root to load.
+	waitForTools(t, ts, 1)
+
+	// Add a second root.
+	client.AddRoots(&mcp.Root{URI: uri2, Name: "root2"})
+
+	// Wait for tools from both roots (prefixed).
+	waitForTools(t, ts, 2)
+
+	ts.mu.Lock()
+	if len(ts.roots) != 2 {
+		t.Errorf("expected 2 roots, got %d", len(ts.roots))
+	}
+	ts.mu.Unlock()
+
+	// Remove the first root.
+	client.RemoveRoots(uri1)
+
+	// Wait until only 1 tool remains.
+	waitForToolCount(t, ts, 1)
+
+	ts.mu.Lock()
+	if len(ts.roots) != 1 {
+		t.Errorf("expected 1 root after removal, got %d", len(ts.roots))
+	}
+	if _, ok := ts.roots[uri2]; !ok {
+		t.Errorf("expected root %q to remain", uri2)
+	}
+	ts.mu.Unlock()
+}
+
+// waitForTools waits until the server has at least minTools registered.
+func waitForTools(t *testing.T, ts *TaskfileServer, minTools int) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-deadline:
+			ts.mu.Lock()
+			n := len(ts.registeredTools)
+			ts.mu.Unlock()
+			t.Fatalf("timed out waiting for %d tools, have %d", minTools, n)
+		case <-ticker.C:
+			ts.mu.Lock()
+			n := len(ts.registeredTools)
+			ts.mu.Unlock()
+			if n >= minTools {
+				return
+			}
+		}
+	}
+}
+
+// waitForToolCount waits until the server has exactly count tools registered.
+func waitForToolCount(t *testing.T, ts *TaskfileServer, count int) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-deadline:
+			ts.mu.Lock()
+			n := len(ts.registeredTools)
+			ts.mu.Unlock()
+			t.Fatalf("timed out waiting for %d tools, have %d", count, n)
+		case <-ticker.C:
+			ts.mu.Lock()
+			n := len(ts.registeredTools)
+			ts.mu.Unlock()
+			if n == count {
+				return
+			}
+		}
+	}
+}
+
+func TestHandleInitialized_FallbackToWorkdir(t *testing.T) {
+	// This test verifies that when the client does not support roots,
+	// the server falls back to os.Getwd(). We test the isMethodNotFound
+	// helper directly since exercising a client without roots capability
+	// requires deeper SDK internals.
+	err := &jsonrpc.Error{Code: jsonrpc.CodeMethodNotFound, Message: "not found"}
+	if !isMethodNotFound(err) {
+		t.Error("expected isMethodNotFound to return true for CodeMethodNotFound")
+	}
+	if isMethodNotFound(errors.New("some other error")) {
+		t.Error("expected isMethodNotFound to return false for a non-wire error")
 	}
 }
 
