@@ -631,7 +631,7 @@ func TestWatchTaskfiles_ReloadsOnChange(t *testing.T) {
 	ctx := t.Context()
 
 	go func() {
-		_ = s.watchTaskfiles(ctx)
+		_ = s.watchTaskfiles(ctx, snapshotRoots(s))
 	}()
 
 	// Give the watcher time to start.
@@ -653,7 +653,10 @@ func TestWatchTaskfiles_ReloadsOnChange(t *testing.T) {
 		case <-deadline:
 			t.Fatal("timed out waiting for tool reload")
 		case <-ticker.C:
-			if _, ok := s.registeredTools["goodbye"]; ok {
+			s.mu.Lock()
+			_, ok := s.registeredTools["goodbye"]
+			s.mu.Unlock()
+			if ok {
 				return // success
 			}
 		}
@@ -672,7 +675,7 @@ func TestWatchTaskfiles_IgnoresNonTaskfile(t *testing.T) {
 	ctx := t.Context()
 
 	go func() {
-		_ = s.watchTaskfiles(ctx)
+		_ = s.watchTaskfiles(ctx, snapshotRoots(s))
 	}()
 
 	time.Sleep(100 * time.Millisecond)
@@ -686,8 +689,11 @@ func TestWatchTaskfiles_IgnoresNonTaskfile(t *testing.T) {
 	time.Sleep(400 * time.Millisecond)
 
 	// Tools should remain unchanged.
-	if len(s.registeredTools) != 1 {
-		t.Errorf("expected 1 tool, got %d", len(s.registeredTools))
+	s.mu.Lock()
+	n := len(s.registeredTools)
+	s.mu.Unlock()
+	if n != 1 {
+		t.Errorf("expected 1 tool, got %d", n)
 	}
 }
 
@@ -703,7 +709,7 @@ func TestWatchTaskfiles_CancelStops(t *testing.T) {
 	done := make(chan error, 1)
 
 	go func() {
-		done <- s.watchTaskfiles(ctx)
+		done <- s.watchTaskfiles(ctx, snapshotRoots(s))
 	}()
 
 	time.Sleep(50 * time.Millisecond)
@@ -717,6 +723,15 @@ func TestWatchTaskfiles_CancelStops(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("watchTaskfiles did not stop after context cancellation")
 	}
+}
+
+// snapshotRoots returns a rootSnapshot slice for use with watchTaskfiles.
+func snapshotRoots(s *TaskfileServer) []rootSnapshot {
+	snap := make([]rootSnapshot, 0, len(s.roots))
+	for uri, root := range s.roots {
+		snap = append(snap, rootSnapshot{uri: uri, root: root})
+	}
+	return snap
 }
 
 // newTempServer creates a TaskfileServer backed by a temp directory containing
@@ -851,7 +866,7 @@ func TestWatchTaskfiles_DebounceCoalesces(t *testing.T) {
 	ctx := t.Context()
 
 	go func() {
-		_ = s.watchTaskfiles(ctx)
+		_ = s.watchTaskfiles(ctx, snapshotRoots(s))
 	}()
 
 	time.Sleep(100 * time.Millisecond)
@@ -875,7 +890,9 @@ func TestWatchTaskfiles_DebounceCoalesces(t *testing.T) {
 		case <-deadline:
 			t.Fatal("timed out waiting for debounced reload")
 		case <-ticker.C:
+			s.mu.Lock()
 			tool, ok := s.registeredTools["hello"]
+			s.mu.Unlock()
 			if ok && tool.Description == "Attempt 4" {
 				return // success — final write was applied
 			}
@@ -1437,7 +1454,7 @@ func TestWatchTaskfiles_NewSubdirectory(t *testing.T) {
 	ctx := t.Context()
 
 	go func() {
-		_ = s.watchTaskfiles(ctx)
+		_ = s.watchTaskfiles(ctx, snapshotRoots(s))
 	}()
 
 	time.Sleep(100 * time.Millisecond)
@@ -1473,9 +1490,15 @@ func TestWatchTaskfiles_NewSubdirectory(t *testing.T) {
 	for {
 		select {
 		case <-deadline:
-			t.Fatalf("timed out waiting for sub-task; registered tools: %v", toolNames(s.registeredTools))
+			s.mu.Lock()
+			names := toolNames(s.registeredTools)
+			s.mu.Unlock()
+			t.Fatalf("timed out waiting for sub-task; registered tools: %v", names)
 		case <-ticker.C:
-			if _, ok := s.registeredTools["sub_sub-task"]; ok {
+			s.mu.Lock()
+			_, ok := s.registeredTools["sub_sub-task"]
+			s.mu.Unlock()
+			if ok {
 				return // success
 			}
 		}

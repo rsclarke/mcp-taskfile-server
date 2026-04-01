@@ -19,7 +19,7 @@ tasks:
   test:
     desc: Run tests
     cmds:
-      - go test ./...
+      - go test -race ./...
 
   build:
     desc: Build the server binary

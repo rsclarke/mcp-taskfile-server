@@ -80,6 +80,7 @@ type TaskfileServer struct {
 	registeredTools map[string]mcp.Tool
 	mu              sync.Mutex
 	watchCancel     context.CancelFunc
+	watchDone       chan struct{}
 }
 
 // dirToURI converts an absolute directory path to a file:// URI.
@@ -506,12 +507,17 @@ func (s *TaskfileServer) watchRootTaskfiles(ctx context.Context, uri string, roo
 	defer func() {
 		_ = watcher.Close()
 		s.mu.Lock()
-		root.watcher = nil
+		if root.watcher == watcher {
+			root.watcher = nil
+		}
 		s.mu.Unlock()
 	}()
 
 	// Recursively add all directories under the root's workdir.
 	err = filepath.WalkDir(root.workdir, func(path string, d fs.DirEntry, err error) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if err != nil {
 			return err
 		}
@@ -521,19 +527,31 @@ func (s *TaskfileServer) watchRootTaskfiles(ctx context.Context, uri string, roo
 		return nil
 	})
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
 		return fmt.Errorf("failed to walk working directory: %w", err)
 	}
 
 	const debounce = 200 * time.Millisecond
-	var timer *time.Timer
+	timer := time.NewTimer(0)
+	if !timer.Stop() {
+		<-timer.C
+	}
+	timerPending := false
 
 	for {
 		select {
 		case <-ctx.Done():
-			if timer != nil {
-				timer.Stop()
+			if !timer.Stop() && timerPending {
+				<-timer.C
 			}
 			return nil
+		case <-timer.C:
+			timerPending = false
+			if err := s.reloadRoot(uri); err != nil {
+				log.Printf("failed to reload tools for root %s: %v", uri, err)
+			}
 		case event, ok := <-watcher.Events:
 			if !ok {
 				return nil
@@ -551,14 +569,11 @@ func (s *TaskfileServer) watchRootTaskfiles(ctx context.Context, uri string, roo
 			}
 
 			// Debounce rapid events.
-			if timer != nil {
-				timer.Stop()
+			if !timer.Stop() && timerPending {
+				<-timer.C
 			}
-			timer = time.AfterFunc(debounce, func() {
-				if err := s.reloadRoot(uri); err != nil {
-					log.Printf("failed to reload tools for root %s: %v", uri, err)
-				}
-			})
+			timer.Reset(debounce)
+			timerPending = true
 		case err, ok := <-watcher.Errors:
 			if !ok {
 				return nil
@@ -568,16 +583,23 @@ func (s *TaskfileServer) watchRootTaskfiles(ctx context.Context, uri string, roo
 	}
 }
 
-// watchTaskfiles starts file watchers for all roots and blocks until the
-// context is cancelled.
-func (s *TaskfileServer) watchTaskfiles(ctx context.Context) error {
+// rootSnapshot is a URI→rootState pair captured under lock for use by
+// watchTaskfiles without holding the mutex.
+type rootSnapshot struct {
+	uri  string
+	root *rootState
+}
+
+// watchTaskfiles starts file watchers for the given roots and blocks until the
+// context is cancelled. The caller must provide a snapshot captured under lock.
+func (s *TaskfileServer) watchTaskfiles(ctx context.Context, roots []rootSnapshot) error {
 	var wg sync.WaitGroup
 	var firstErr error
 	var errOnce sync.Once
 
-	for uri, root := range s.roots {
+	for _, rs := range roots {
 		wg.Go(func() {
-			if err := s.watchRootTaskfiles(ctx, uri, root); err != nil {
+			if err := s.watchRootTaskfiles(ctx, rs.uri, rs.root); err != nil {
 				errOnce.Do(func() { firstErr = err })
 			}
 		})
@@ -594,20 +616,46 @@ func isMethodNotFound(err error) bool {
 	return errors.As(err, &wireErr) && wireErr.Code == jsonrpc.CodeMethodNotFound
 }
 
-// restartWatchers cancels any running file watchers and starts new ones
-// for all current roots. The provided ctx is intentionally detached via
-// context.WithoutCancel because callers pass request-scoped contexts
-// that are cancelled after the handler returns.
+// restartWatchers cancels any running file watchers, waits for them to
+// exit, then starts new ones for all current roots. The caller must hold
+// s.mu; it is temporarily released while waiting for old watchers so
+// that watcher goroutines calling reloadRoot can acquire the lock. The
+// provided ctx is intentionally detached via context.WithoutCancel
+// because callers pass request-scoped contexts that are cancelled after
+// the handler returns.
 func (s *TaskfileServer) restartWatchers(ctx context.Context) {
-	if s.watchCancel != nil {
-		s.watchCancel()
+	// Capture previous watcher generation's cancel and done channel.
+	prevCancel := s.watchCancel
+	prevDone := s.watchDone
+
+	// Snapshot roots while we hold the lock.
+	snap := make([]rootSnapshot, 0, len(s.roots))
+	for uri, root := range s.roots {
+		snap = append(snap, rootSnapshot{uri: uri, root: root})
 	}
+
+	// Prepare the new watcher generation before releasing the lock.
 	// Detach from the caller's request-scoped context which is cancelled
 	// after the handler returns; the watcher must outlive the request.
 	watchCtx, cancel := context.WithCancel(context.WithoutCancel(ctx)) //nolint:gosec // cancel is stored in s.watchCancel and called on next restart or shutdown
+	done := make(chan struct{})
 	s.watchCancel = cancel
+	s.watchDone = done
+
+	// Release lock while waiting for old watchers so they can acquire
+	// it during teardown (e.g. clearing root.watcher).
+	s.mu.Unlock()
+	if prevCancel != nil {
+		prevCancel()
+	}
+	if prevDone != nil {
+		<-prevDone
+	}
+	s.mu.Lock()
+
 	go func() {
-		if err := s.watchTaskfiles(watchCtx); err != nil {
+		defer close(done)
+		if err := s.watchTaskfiles(watchCtx, snap); err != nil {
 			log.Printf("file watcher failed: %v", err)
 		}
 	}()
