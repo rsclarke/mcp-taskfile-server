@@ -16,6 +16,7 @@ Built using the official [Go MCP SDK](https://github.com/modelcontextprotocol/go
 - **Individual Task Tools**: Each task becomes its own MCP tool with proper schema
 - **Variable Schema Generation**: Automatically extracts task variables for proper parameter validation
 - **Native Task Execution**: Uses go-task library directly (no subprocess execution)
+- **Multi-Root Support**: Discovers roots via the MCP [Roots](https://modelcontextprotocol.io/specification/2025-11-25/client/roots) capability, loading Taskfiles from each root directory
 - **Auto Reload**: Watches Taskfile.yml (and included Taskfiles) for changes and automatically re-exposes updated tools to connected clients
 - **MCP Protocol Compliance**: Uses the official Go MCP SDK for full specification compliance
 
@@ -33,15 +34,21 @@ Built using the official [Go MCP SDK](https://github.com/modelcontextprotocol/go
 
 ### Running the Server
 
-The server communicates via JSON-RPC over stdin/stdout exposing the Taskfile.yml in the current working directory:
+The server communicates via JSON-RPC over stdin/stdout:
 
 ```bash
 mcp-taskfile-server
 ```
 
+### Root Discovery
+
+After the client handshake completes, the server calls `roots/list` to discover which directories to load Taskfiles from. Clients that support the MCP [Roots](https://modelcontextprotocol.io/specification/2025-11-25/client/roots) capability can provide one or more `file://` root URIs. If the client does not support roots (returns JSON-RPC `-32601`), the server falls back to the current working directory.
+
+When roots change at runtime (`notifications/roots/list_changed`), the server automatically diffs the root set, tears down removed roots (stopping their file watchers and unregistering their tools), and loads any newly added roots.
+
 ### Dynamic Tool Discovery
 
-The server automatically discovers all tasks in your Taskfile.yml and exposes each as an individual MCP tool.
+The server automatically discovers all tasks in each root's Taskfile.yml and exposes each as an individual MCP tool.
 
 Each tool automatically includes:
 - **Task-specific variables**: Extracted from the task definition with proper defaults
@@ -64,6 +71,18 @@ Taskfile task names can contain characters (`:`, `*`) that are invalid in MCP to
 | Mixed namespace + wildcard | `uv:add:*` | `uv_add` |
 
 When the tool name differs from the original task name, the original is included in the tool description for discoverability.
+
+### Multi-Root Prefixing
+
+With a **single root**, tool names are unprefixed (as shown above). When the client provides **multiple roots**, each tool name is prefixed with a sanitized form of the root directory's basename to avoid collisions:
+
+| Root directory | Task | MCP tool name |
+|---|---|---|
+| `/home/user/frontend` | `build` | `frontend_build` |
+| `/home/user/backend` | `build` | `backend_build` |
+| `/home/user/frontend` | `lint:*` | `frontend_lint` |
+
+The prefix is derived from the directory basename with non-alphanumeric characters (except `_`, `-`, `.`) replaced by underscores. If a root is added or removed such that the count crosses the 1↔N boundary, all tools are re-registered with or without prefixes accordingly.
 
 ### Wildcard Tasks
 
@@ -89,12 +108,14 @@ executes `task deploy:api:production`.
 
 This server implements the Model Context Protocol and can be used with any MCP-compatible client or AI assistant. The server:
 
-1. **Dynamically discovers** all tasks from Taskfile.yml at startup
-2. **Sanitizes task names** into valid MCP tool names for strict client compatibility
-3. **Exposes each task** as an individual MCP tool with proper JSON schema
-4. **Automatically extracts** task variables for parameter validation
-5. **Executes tasks natively** using the go-task library (no subprocess calls)
-6. **Provides comprehensive** error handling and feedback
+1. **Requests roots** from the client after handshake; falls back to the working directory if unsupported
+2. **Dynamically discovers** all tasks from each root's Taskfile.yml
+3. **Sanitizes task names** into valid MCP tool names for strict client compatibility
+4. **Exposes each task** as an individual MCP tool with proper JSON schema
+5. **Automatically extracts** task variables for parameter validation
+6. **Reacts to root changes** by adding/removing roots and re-syncing tools at runtime
+7. **Executes tasks natively** using the go-task library (no subprocess calls)
+8. **Provides comprehensive** error handling and feedback
 
 ## Auto Reload
 
@@ -125,22 +146,25 @@ This server executes arbitrary commands defined in your Taskfile. Only use it in
 
 To modify or extend the server:
 
-1. **Server Setup**: The MCP server is created using `mcp.NewServer()` from the Go MCP SDK
-2. **Dynamic Discovery**: Tasks are discovered and built into a tool set via `buildToolSet()`
-3. **Tool Generation**: Each task becomes an MCP tool via `createToolForTask()`
-4. **Variable Extraction**: Task variables are automatically extracted for schema generation
-5. **Handler Creation**: Each task gets its own handler via `createTaskHandler()`
-6. **Tool Sync**: `syncTools()` diffs and updates registered tools; `watchTaskfiles()` triggers reloads on file changes
-7. **Native Execution**: Tasks are executed using `executor.Run()` from go-task library
+1. **Server Setup**: The MCP server is created using `mcp.NewServer()` with `InitializedHandler` and `RootsListChangedHandler`
+2. **Root Loading**: `handleInitialized()` calls `ListRoots` to discover directories; `handleRootsChanged()` diffs and updates the root set
+3. **Dynamic Discovery**: Tasks are discovered and built into a tool set via `buildToolSet()`
+4. **Tool Generation**: Each task becomes an MCP tool via `createToolForTask()`
+5. **Variable Extraction**: Task variables are automatically extracted for schema generation
+6. **Handler Creation**: Each task gets its own handler via `createTaskHandler()`
+7. **Tool Sync**: `syncTools()` diffs and updates registered tools; `watchTaskfiles()` triggers reloads on file changes
+8. **Native Execution**: Tasks are executed using `executor.Run()` from go-task library
 
 ### Key Components
 
-- **`NewTaskfileServer()`**: Sets up go-task executor and parses Taskfile.yml
-- **`buildToolSet()`**: Discovers tasks and builds the set of MCP tools and handlers
+- **`NewTaskfileServer()`**: Creates an empty server; roots are loaded after the client handshake
+- **`handleInitialized()`**: Requests roots from the client, loads each root's Taskfile, syncs tools, and starts file watchers
+- **`handleRootsChanged()`**: Diffs the current root set against the client's updated list, adding/removing roots and re-syncing tools
+- **`loadRoot()` / `unloadRoot()`**: Creates or tears down a per-root executor and file watcher
+- **`buildToolSet()`**: Discovers tasks across all roots and builds the set of MCP tools and handlers
 - **`createToolForTask()`**: Generates MCP tool schema from task definition
 - **`createTaskHandler()`**: Creates execution handler for each task
 - **`syncTools()`**: Diffs current tasks against registered tools and adds/removes as needed
-- **`loadAndRegisterTools()`**: Re-initialises the executor and triggers a sync on reload
 - **`watchTaskfiles()`**: Watches Taskfile.yml and included files for changes with debounced reload
 
 ### Key Dependencies
