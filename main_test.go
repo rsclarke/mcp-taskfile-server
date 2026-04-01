@@ -1082,6 +1082,349 @@ func TestHandleInitialized_FallbackToWorkdir(t *testing.T) {
 	}
 }
 
+func TestCreateTaskHandler_Success(t *testing.T) {
+	s := loadServerFromFixture(t, "basic")
+	root := onlyRoot(t, s)
+
+	handler := createTaskHandler(root, "greet")
+	result, err := handler(t.Context(), &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{Name: "greet"},
+	})
+	if err != nil {
+		t.Fatalf("handler returned error: %v", err)
+	}
+	if result.IsError {
+		t.Errorf("expected success, got IsError=true")
+	}
+
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "completed successfully") {
+		t.Errorf("expected success message, got %q", text)
+	}
+	if !strings.Contains(text, "hello") {
+		t.Errorf("expected output to contain 'hello', got %q", text)
+	}
+}
+
+func TestCreateTaskHandler_TaskFailure(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  fail:\n    desc: A failing task\n    cmds:\n      - exit 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	root, err := loadRoot(dir)
+	if err != nil {
+		t.Fatalf("loadRoot: %v", err)
+	}
+
+	handler := createTaskHandler(root, "fail")
+	result, handlerErr := handler(t.Context(), &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{Name: "fail"},
+	})
+	if handlerErr != nil {
+		t.Fatalf("handler returned Go error: %v", handlerErr)
+	}
+	if !result.IsError {
+		t.Error("expected IsError=true for a failing task")
+	}
+
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "failed") {
+		t.Errorf("expected failure message, got %q", text)
+	}
+}
+
+func TestCreateTaskHandler_WithVariables(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  greet:\n    desc: Greet someone\n    cmds:\n      - echo hello {{.NAME}}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	root, err := loadRoot(dir)
+	if err != nil {
+		t.Fatalf("loadRoot: %v", err)
+	}
+
+	handler := createTaskHandler(root, "greet")
+	args := json.RawMessage(`{"NAME":"world"}`)
+	result, handlerErr := handler(t.Context(), &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{
+			Name:      "greet",
+			Arguments: args,
+		},
+	})
+	if handlerErr != nil {
+		t.Fatalf("handler returned error: %v", handlerErr)
+	}
+	if result.IsError {
+		t.Errorf("expected success, got IsError=true")
+	}
+
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "world") {
+		t.Errorf("expected output to contain 'world', got %q", text)
+	}
+}
+
+func TestCreateTaskHandler_WildcardMATCH(t *testing.T) {
+	s := loadServerFromFixture(t, "wildcard")
+	root := onlyRoot(t, s)
+
+	handler := createTaskHandler(root, "start:*")
+	args := json.RawMessage(`{"MATCH":"web"}`)
+	result, err := handler(t.Context(), &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{
+			Name:      "start",
+			Arguments: args,
+		},
+	})
+	if err != nil {
+		t.Fatalf("handler returned error: %v", err)
+	}
+	if result.IsError {
+		text := result.Content[0].(*mcp.TextContent).Text
+		t.Errorf("expected success, got IsError=true: %s", text)
+	}
+
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "web") {
+		t.Errorf("expected output to contain 'web', got %q", text)
+	}
+}
+
+func TestCreateTaskHandler_WildcardMissingMATCH(t *testing.T) {
+	s := loadServerFromFixture(t, "wildcard")
+	root := onlyRoot(t, s)
+
+	handler := createTaskHandler(root, "start:*")
+	result, err := handler(t.Context(), &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{Name: "start"},
+	})
+	if err != nil {
+		t.Fatalf("handler returned error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected IsError=true when MATCH is missing")
+	}
+
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "MATCH") {
+		t.Errorf("expected error to mention MATCH, got %q", text)
+	}
+}
+
+func TestCreateTaskHandler_WildcardWrongCount(t *testing.T) {
+	s := loadServerFromFixture(t, "wildcard")
+	root := onlyRoot(t, s)
+
+	handler := createTaskHandler(root, "deploy:*:*")
+	args := json.RawMessage(`{"MATCH":"onlyone"}`)
+	result, err := handler(t.Context(), &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{
+			Name:      "deploy",
+			Arguments: args,
+		},
+	})
+	if err != nil {
+		t.Fatalf("handler returned error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected IsError=true for wrong MATCH count")
+	}
+
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "2 comma-separated") {
+		t.Errorf("expected error about comma-separated values, got %q", text)
+	}
+}
+
+func TestCreateTaskHandler_InvalidArguments(t *testing.T) {
+	s := loadServerFromFixture(t, "basic")
+	root := onlyRoot(t, s)
+
+	handler := createTaskHandler(root, "greet")
+	args := json.RawMessage(`{invalid json}`)
+	result, err := handler(t.Context(), &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{
+			Name:      "greet",
+			Arguments: args,
+		},
+	})
+	if err != nil {
+		t.Fatalf("handler returned error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected IsError=true for invalid JSON arguments")
+	}
+
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "Failed to parse") {
+		t.Errorf("expected parse error message, got %q", text)
+	}
+}
+
+func TestBuildToolSet_Collision(t *testing.T) {
+	// Create two dirs with the same basename ("dup") containing identically
+	// named tasks. With >1 root the prefix is derived from the basename,
+	// so both roots produce the same prefixed tool name → collision.
+	dir1 := filepath.Join(t.TempDir(), "dup")
+	dir2 := filepath.Join(t.TempDir(), "dup")
+	if err := os.Mkdir(dir1, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(dir2, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	taskfile := []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n")
+	if err := os.WriteFile(filepath.Join(dir1, "Taskfile.yml"), taskfile, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir2, "Taskfile.yml"), taskfile, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	r1, err := loadRoot(dir1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2, err := loadRoot(dir2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := &TaskfileServer{
+		roots: map[string]*rootState{
+			dirToURI(dir1): r1,
+			dirToURI(dir2): r2,
+		},
+	}
+
+	_, _, err = s.buildToolSet()
+	if err == nil {
+		t.Fatal("expected collision error, got nil")
+	}
+	if !strings.Contains(err.Error(), "collision") {
+		t.Errorf("expected collision error, got: %v", err)
+	}
+}
+
+func TestBuildToolSet_NoTasks(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  helper:\n    internal: true\n    cmds:\n      - echo hidden\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	root, err := loadRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := &TaskfileServer{
+		roots: map[string]*rootState{dirToURI(dir): root},
+	}
+
+	_, _, err = s.buildToolSet()
+	if err == nil {
+		t.Fatal("expected error for no tasks, got nil")
+	}
+	if !strings.Contains(err.Error(), "no tasks found") {
+		t.Errorf("expected 'no tasks found' error, got: %v", err)
+	}
+}
+
+func TestHandleRootsChanged_TransitionToUnprefixed(t *testing.T) {
+	dir1 := t.TempDir()
+	dir2 := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir1, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  task1:\n    desc: Task one\n    cmds:\n      - echo one\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir2, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  task2:\n    desc: Task two\n    cmds:\n      - echo two\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ts := NewTaskfileServer()
+	ctx := t.Context()
+
+	uri1 := dirToURI(dir1)
+	uri2 := dirToURI(dir2)
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
+	client.AddRoots(
+		&mcp.Root{URI: uri1, Name: "root1"},
+		&mcp.Root{URI: uri2, Name: "root2"},
+	)
+
+	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, &mcp.ServerOptions{
+		InitializedHandler:      ts.handleInitialized,
+		RootsListChangedHandler: ts.handleRootsChanged,
+	})
+	ts.mcpServer = server
+	ts.registeredTools = make(map[string]mcp.Tool)
+
+	ct, st := mcp.NewInMemoryTransports()
+	ss, err := server.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ss.Close() })
+
+	cs, err := client.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+
+	// Wait for both roots to be loaded (prefixed tools).
+	waitForTools(t, ts, 2)
+
+	// Verify tools are prefixed.
+	ts.mu.Lock()
+	for name := range ts.registeredTools {
+		if name == "task1" || name == "task2" {
+			t.Errorf("expected prefixed tool name with 2 roots, got %q", name)
+		}
+	}
+	ts.mu.Unlock()
+
+	// Remove one root to go back to a single root.
+	client.RemoveRoots(uri1)
+
+	// Wait until only 1 tool remains.
+	waitForToolCount(t, ts, 1)
+
+	// Verify the remaining tool is unprefixed.
+	ts.mu.Lock()
+	if _, ok := ts.registeredTools["task2"]; !ok {
+		t.Errorf("expected unprefixed tool 'task2' after N->1 transition, got: %v", toolNames(ts.registeredTools))
+	}
+	ts.mu.Unlock()
+}
+
+func TestReloadRoot_UnknownURI(t *testing.T) {
+	s := newTestServer(t, "basic")
+
+	err := s.reloadRoot("file:///nonexistent")
+	if err == nil {
+		t.Fatal("expected error for unknown URI, got nil")
+	}
+	if !strings.Contains(err.Error(), "unknown root") {
+		t.Errorf("expected 'unknown root' error, got: %v", err)
+	}
+}
+
+func TestCreateToolForTask_WithPrefix(t *testing.T) {
+	s := loadServerFromFixture(t, "basic")
+	root := onlyRoot(t, s)
+
+	taskDef := lookupTask(t, root.taskfile, "greet")
+	tool := createToolForTask(root, "myproject", "greet", taskDef)
+
+	if tool.Name != "myproject_greet" {
+		t.Errorf("Name = %q, want %q", tool.Name, "myproject_greet")
+	}
+}
+
 func TestWatchTaskfiles_NewSubdirectory(t *testing.T) {
 	dir := t.TempDir()
 	initial := []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n")
