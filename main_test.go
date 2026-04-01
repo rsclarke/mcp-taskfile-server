@@ -1481,3 +1481,94 @@ func TestWatchTaskfiles_NewSubdirectory(t *testing.T) {
 		}
 	}
 }
+
+func TestToolListChangedNotification_OnFileChange(t *testing.T) {
+	dir := t.TempDir()
+	initial := []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n")
+	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), initial, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ts := NewTaskfileServer()
+	ctx := t.Context()
+
+	rootURI := dirToURI(dir)
+
+	// Track notifications received by the client.
+	notified := make(chan struct{}, 10)
+
+	client := mcp.NewClient(
+		&mcp.Implementation{Name: "test-client", Version: "0.0.0"},
+		&mcp.ClientOptions{
+			ToolListChangedHandler: func(_ context.Context, _ *mcp.ToolListChangedRequest) {
+				notified <- struct{}{}
+			},
+		},
+	)
+	client.AddRoots(&mcp.Root{URI: rootURI, Name: "test"})
+
+	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, &mcp.ServerOptions{
+		InitializedHandler:      ts.handleInitialized,
+		RootsListChangedHandler: ts.handleRootsChanged,
+	})
+	ts.mcpServer = server
+	ts.registeredTools = make(map[string]mcp.Tool)
+
+	ct, st := mcp.NewInMemoryTransports()
+	ss, err := server.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ss.Close() })
+
+	cs, err := client.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+
+	// Wait for initial tools to be registered.
+	waitForTools(t, ts, 1)
+
+	// Drain any notifications from the initial tool registration.
+	drainDone := time.After(500 * time.Millisecond)
+drain:
+	for {
+		select {
+		case <-notified:
+		case <-drainDone:
+			break drain
+		}
+	}
+
+	// Write an updated Taskfile with a new task.
+	updated := []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n  goodbye:\n    desc: Say goodbye\n    cmds:\n      - echo goodbye\n")
+	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), updated, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for the server to reload and register the new tool.
+	waitForTools(t, ts, 2)
+
+	// The client should receive a tools/list_changed notification.
+	select {
+	case <-notified:
+		// success — notification was delivered
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for tools/list_changed notification from file change")
+	}
+
+	// Verify the client can see the new tool via ListTools.
+	toolsRes, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("ListTools failed: %v", err)
+	}
+
+	toolNames := make(map[string]bool)
+	for _, tool := range toolsRes.Tools {
+		toolNames[tool.Name] = true
+	}
+	if !toolNames["goodbye"] {
+		t.Errorf("expected tool %q in ListTools response, got: %v", "goodbye", toolNames)
+	}
+}

@@ -595,13 +595,16 @@ func isMethodNotFound(err error) bool {
 }
 
 // restartWatchers cancels any running file watchers and starts new ones
-// for all current roots. The provided ctx should be the long-lived server
-// context from which a child context is derived.
+// for all current roots. The provided ctx is intentionally detached via
+// context.WithoutCancel because callers pass request-scoped contexts
+// that are cancelled after the handler returns.
 func (s *TaskfileServer) restartWatchers(ctx context.Context) {
 	if s.watchCancel != nil {
 		s.watchCancel()
 	}
-	watchCtx, cancel := context.WithCancel(ctx) //nolint:gosec // cancel is stored in s.watchCancel and called on next restart or shutdown
+	// Detach from the caller's request-scoped context which is cancelled
+	// after the handler returns; the watcher must outlive the request.
+	watchCtx, cancel := context.WithCancel(context.WithoutCancel(ctx)) //nolint:gosec // cancel is stored in s.watchCancel and called on next restart or shutdown
 	s.watchCancel = cancel
 	go func() {
 		if err := s.watchTaskfiles(watchCtx); err != nil {
