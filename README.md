@@ -17,7 +17,7 @@ Built using the official [Go MCP SDK](https://github.com/modelcontextprotocol/go
 - **Variable Schema Generation**: Automatically extracts task variables for proper parameter validation
 - **Native Task Execution**: Uses go-task library directly (no subprocess execution)
 - **Multi-Root Support**: Discovers roots via the MCP [Roots](https://modelcontextprotocol.io/specification/2025-11-25/client/roots) capability, loading Taskfiles from each root directory
-- **Auto Reload**: Watches Taskfile.yml (and included Taskfiles) for changes and automatically re-exposes updated tools to connected clients
+- **Auto Reload**: Watches each root's resolved local Taskfile graph for changes and automatically re-exposes updated tools to connected clients
 - **MCP Protocol Compliance**: Uses the official Go MCP SDK for full specification compliance
 
 ## Requirements
@@ -119,14 +119,14 @@ This server implements the Model Context Protocol and can be used with any MCP-c
 
 ## Auto Reload
 
-The server watches your Taskfile.yml and any included Taskfiles for changes using `fsnotify`. When a file is modified, added, or removed, the server automatically:
+The server resolves each root's Taskfile graph using `go-task`, then watches the parent directories for every local Taskfile in that graph using `fsnotify`. When one of those Taskfiles is modified, added, or removed, the server automatically:
 
 1. Reloads and re-parses the Taskfile
 2. Diffs the updated task set against currently registered tools
 3. Adds new tools and removes stale ones via the MCP SDK
 4. Notifies connected clients of the change (`notifications/tools/list_changed`)
 
-File system events are debounced (~200 ms) to avoid redundant reloads during rapid edits. The watcher runs for the lifetime of the server and is cleaned up on shutdown.
+After each reload, the server recomputes the graph-derived watch set so newly included local Taskfiles start being watched and removed ones stop being watched. File system events are debounced (~200 ms) to avoid redundant reloads during rapid edits. The watcher runs for the lifetime of the server and is cleaned up on shutdown.
 
 ## Error Handling
 
@@ -152,7 +152,7 @@ To modify or extend the server:
 4. **Tool Generation**: Each task becomes an MCP tool via `createToolForTask()`
 5. **Variable Extraction**: Task variables are automatically extracted for schema generation
 6. **Handler Creation**: Each task gets its own handler via `createTaskHandler()`
-7. **Tool Sync**: `syncTools()` diffs and updates registered tools; `watchTaskfiles()` triggers reloads on file changes
+7. **Tool Sync**: `syncTools()` diffs and updates registered tools; `watchTaskfiles()` triggers reloads from the graph-derived Taskfile watch set
 8. **Native Execution**: Tasks are executed using `executor.Run()` from go-task library
 
 ### Key Components
@@ -161,11 +161,12 @@ To modify or extend the server:
 - **`handleInitialized()`**: Requests roots from the client, loads each root's Taskfile, syncs tools, and starts file watchers
 - **`handleRootsChanged()`**: Diffs the current root set against the client's updated list, adding/removing roots and re-syncing tools
 - **`loadRoot()` / `unloadRoot()`**: Creates or tears down a per-root executor and file watcher
+- **`loadTaskfileWatchSet()`**: Resolves the local Taskfile graph and derives the Taskfiles and parent directories to watch
 - **`buildToolSet()`**: Discovers tasks across all roots and builds the set of MCP tools and handlers
 - **`createToolForTask()`**: Generates MCP tool schema from task definition
 - **`createTaskHandler()`**: Creates execution handler for each task
 - **`syncTools()`**: Diffs current tasks against registered tools and adds/removes as needed
-- **`watchTaskfiles()`**: Watches Taskfile.yml and included files for changes with debounced reload
+- **`watchTaskfiles()`**: Watches the graph-derived Taskfile set for changes with debounced reload
 
 ### Key Dependencies
 
