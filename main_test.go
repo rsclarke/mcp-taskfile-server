@@ -26,7 +26,7 @@ func loadServerFromFixture(t *testing.T, name string) *TaskfileServer {
 	_, filename, _, _ := runtime.Caller(0)
 	dir := filepath.Join(filepath.Dir(filename), "testdata", name)
 
-	root, err := loadRoot(dir)
+	root, err := loadRoot(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("failed to load root for fixture %q: %v", name, err)
 	}
@@ -565,7 +565,7 @@ func TestMultiRoot_Prefixing(t *testing.T) {
 	// Load a second root from a different fixture.
 	_, filename, _, _ := runtime.Caller(0)
 	dir2 := filepath.Join(filepath.Dir(filename), "testdata", "no-desc")
-	root2, err := loadRoot(dir2)
+	root2, err := loadRoot(t.Context(), dir2)
 	if err != nil {
 		t.Fatalf("loadRoot: %v", err)
 	}
@@ -632,7 +632,7 @@ func TestLoadRoot_WatchTaskfilesIncludesTransitive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	root, err := loadRoot(dir)
+	root, err := loadRoot(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("loadRoot: %v", err)
 	}
@@ -926,7 +926,7 @@ func newTempServer(t *testing.T, taskfileContent []byte) *TaskfileServer {
 // with a real *mcp.Server and initial syncTools.
 func newServerForDir(t *testing.T, dir string) *TaskfileServer {
 	t.Helper()
-	root, err := loadRoot(dir)
+	root, err := loadRoot(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("loadRoot: %v", err)
 	}
@@ -1306,7 +1306,7 @@ func TestCreateTaskHandler_TaskFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	root, err := loadRoot(dir)
+	root, err := loadRoot(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("loadRoot: %v", err)
 	}
@@ -1334,7 +1334,7 @@ func TestCreateTaskHandler_WithVariables(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	root, err := loadRoot(dir)
+	root, err := loadRoot(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("loadRoot: %v", err)
 	}
@@ -1478,11 +1478,11 @@ func TestBuildToolSet_Collision(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r1, err := loadRoot(dir1)
+	r1, err := loadRoot(t.Context(), dir1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r2, err := loadRoot(dir2)
+	r2, err := loadRoot(t.Context(), dir2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1509,7 +1509,7 @@ func TestBuildToolSet_NoTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	root, err := loadRoot(dir)
+	root, err := loadRoot(t.Context(), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1598,7 +1598,7 @@ func TestHandleRootsChanged_TransitionToUnprefixed(t *testing.T) {
 func TestReloadRoot_UnknownURI(t *testing.T) {
 	s := newTestServer(t, "basic")
 
-	err := s.reloadRoot("file:///nonexistent")
+	err := s.reloadRoot(t.Context(), "file:///nonexistent")
 	if err == nil {
 		t.Fatal("expected error for unknown URI, got nil")
 	}

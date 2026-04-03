@@ -120,13 +120,13 @@ func sanitizeRootPrefix(name string) string {
 }
 
 // loadRoot creates a new rootState by loading the Taskfile from the given directory.
-func loadRoot(dir string) (*rootState, error) {
+func loadRoot(ctx context.Context, dir string) (*rootState, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve path: %w", err)
 	}
 
-	watchTaskfiles, watchDirs, err := loadTaskfileWatchSet(abs)
+	watchTaskfiles, watchDirs, err := loadTaskfileWatchSet(ctx, abs)
 	if err != nil {
 		return nil, err
 	}
@@ -151,13 +151,13 @@ func loadRoot(dir string) (*rootState, error) {
 
 // loadTaskfileWatchSet reads the resolved Taskfile graph for a root and returns
 // the local Taskfile files and parent directories that should be watched.
-func loadTaskfileWatchSet(dir string) (map[string]struct{}, []string, error) {
+func loadTaskfileWatchSet(ctx context.Context, dir string) (map[string]struct{}, []string, error) {
 	rootNode, err := taskfile.NewRootNode("", dir, false, 0)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to resolve root Taskfile for %s: %w", dir, err)
 	}
 
-	graph, err := taskfile.NewReader().Read(context.Background(), rootNode)
+	graph, err := taskfile.NewReader().Read(ctx, rootNode)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to read Taskfile graph for %s: %w", dir, err)
 	}
@@ -553,7 +553,7 @@ func isTaskfile(path string) bool {
 
 // reloadRoot re-creates the task executor for a given root URI and syncs
 // the global MCP tool set.
-func (s *TaskfileServer) reloadRoot(uri string) error {
+func (s *TaskfileServer) reloadRoot(ctx context.Context, uri string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -562,7 +562,7 @@ func (s *TaskfileServer) reloadRoot(uri string) error {
 		return fmt.Errorf("unknown root %q", uri)
 	}
 
-	watchTaskfiles, watchDirs, err := loadTaskfileWatchSet(root.workdir)
+	watchTaskfiles, watchDirs, err := loadTaskfileWatchSet(ctx, root.workdir)
 	if err != nil {
 		return err
 	}
@@ -586,7 +586,7 @@ func (s *TaskfileServer) reloadRoot(uri string) error {
 // wrapper for the single-root case.
 func (s *TaskfileServer) loadAndRegisterTools() error {
 	for uri := range s.roots {
-		return s.reloadRoot(uri)
+		return s.reloadRoot(context.Background(), uri)
 	}
 	return errors.New("no roots configured")
 }
@@ -608,7 +608,7 @@ func syncWatcherDirs(watcher *fsnotify.Watcher, current map[string]struct{}, des
 			continue
 		}
 		if err := watcher.Add(dir); err != nil {
-			return current, err
+			return current, fmt.Errorf("watch %s: %w", dir, err)
 		}
 	}
 
@@ -669,7 +669,7 @@ func (s *TaskfileServer) watchRootTaskfiles(ctx context.Context, uri string, roo
 			return nil
 		case <-timer.C:
 			timerPending = false
-			if err := s.reloadRoot(uri); err != nil {
+			if err := s.reloadRoot(ctx, uri); err != nil {
 				log.Printf("failed to reload tools for root %s: %v", uri, err)
 				continue
 			}
@@ -802,7 +802,7 @@ func (s *TaskfileServer) loadRootsFromSession(ctx context.Context, session *mcp.
 			return fmt.Errorf("failed to get working directory: %w", wdErr)
 		}
 		uri := dirToURI(workdir)
-		root, loadErr := loadRoot(workdir)
+		root, loadErr := loadRoot(ctx, workdir)
 		if loadErr != nil {
 			return loadErr
 		}
@@ -823,7 +823,7 @@ func (s *TaskfileServer) loadRootsFromSession(ctx context.Context, session *mcp.
 			log.Printf("skipping root with invalid URI %q: %v", r.URI, parseErr)
 			continue
 		}
-		root, loadErr := loadRoot(dir)
+		root, loadErr := loadRoot(ctx, dir)
 		if loadErr != nil {
 			log.Printf("failed to load root %q: %v", r.URI, loadErr)
 			continue
@@ -883,7 +883,7 @@ func (s *TaskfileServer) handleRootsChanged(ctx context.Context, req *mcp.RootsL
 			log.Printf("skipping root with invalid URI %q: %v", r.URI, parseErr)
 			continue
 		}
-		root, loadErr := loadRoot(dir)
+		root, loadErr := loadRoot(ctx, dir)
 		if loadErr != nil {
 			log.Printf("failed to load root %q: %v", r.URI, loadErr)
 			continue
