@@ -466,7 +466,7 @@ func (s *TaskfileServer) buildToolSet() (map[string]mcp.Tool, map[string]mcp.Too
 	}
 
 	for _, root := range s.roots {
-		if root.taskfile.Tasks == nil {
+		if root.taskfile == nil || root.taskfile.Tasks == nil {
 			continue
 		}
 
@@ -541,6 +541,15 @@ func (s *TaskfileServer) syncTools() error {
 	return nil
 }
 
+// disableRootTools clears the loaded Taskfile state for a root and syncs the
+// server so any previously registered tools are withdrawn. The existing watch
+// set is preserved so restoring the Taskfile can be detected and reloaded.
+func (s *TaskfileServer) disableRootTools(root *rootState) error {
+	root.executor = nil
+	root.taskfile = nil
+	return s.syncTools()
+}
+
 // isTaskfile reports whether the given path's basename matches one of the
 // supported Taskfile filenames from taskfile.DefaultTaskfiles.
 func isTaskfile(path string) bool {
@@ -560,7 +569,10 @@ func (s *TaskfileServer) reloadRoot(ctx context.Context, uri string) error {
 
 	watchTaskfiles, watchDirs, err := loadTaskfileWatchSet(ctx, root.workdir)
 	if err != nil {
-		return err
+		if syncErr := s.disableRootTools(root); syncErr != nil {
+			return fmt.Errorf("failed to reload root %s: %w", uri, errors.Join(err, fmt.Errorf("failed to clear stale tools: %w", syncErr)))
+		}
+		return fmt.Errorf("failed to reload root %s: %w", uri, err)
 	}
 
 	executor := task.NewExecutor(
@@ -568,6 +580,9 @@ func (s *TaskfileServer) reloadRoot(ctx context.Context, uri string) error {
 		task.WithSilent(true),
 	)
 	if err := executor.Setup(); err != nil {
+		if syncErr := s.disableRootTools(root); syncErr != nil {
+			return fmt.Errorf("failed to setup task executor for %s: %w", root.workdir, errors.Join(err, fmt.Errorf("failed to clear stale tools: %w", syncErr)))
+		}
 		return fmt.Errorf("failed to setup task executor for %s: %w", root.workdir, err)
 	}
 	root.executor = executor

@@ -1113,6 +1113,100 @@ func TestWatchTaskfiles_DebounceCoalesces(t *testing.T) {
 	}
 }
 
+func TestWatchTaskfiles_InvalidRootTaskfileRemovesToolsUntilRestored(t *testing.T) {
+	initial := []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n")
+	s := newTempServer(t, initial)
+	root := onlyRoot(t, s)
+
+	ctx := t.Context()
+
+	go func() {
+		_ = s.watchTaskfiles(ctx, snapshotRoots(s))
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	invalid := []byte("version: '3'\ntasks:\n  hello:\n    desc: Broken hello\n    cmds:\n      - echo hello\n    vars: [\n")
+	if err := os.WriteFile(filepath.Join(root.workdir, "Taskfile.yml"), invalid, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	waitForToolCount(t, s, 0)
+
+	restored := []byte("version: '3'\ntasks:\n  hello:\n    desc: Restored hello\n    cmds:\n      - echo hello again\n")
+	if err := os.WriteFile(filepath.Join(root.workdir, "Taskfile.yml"), restored, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.After(2 * time.Second)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-deadline:
+			s.mu.Lock()
+			tool := s.registeredTools["hello"]
+			s.mu.Unlock()
+			t.Fatalf("timed out waiting for restored Taskfile reload; last tool state: %+v", tool)
+		case <-ticker.C:
+			s.mu.Lock()
+			tool, ok := s.registeredTools["hello"]
+			s.mu.Unlock()
+			if ok && tool.Description == "Restored hello" {
+				return
+			}
+		}
+	}
+}
+
+func TestWatchTaskfiles_DeletedRootTaskfileRemovesToolsUntilRestored(t *testing.T) {
+	initial := []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n")
+	s := newTempServer(t, initial)
+	root := onlyRoot(t, s)
+
+	ctx := t.Context()
+
+	go func() {
+		_ = s.watchTaskfiles(ctx, snapshotRoots(s))
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	taskfilePath := filepath.Join(root.workdir, "Taskfile.yml")
+	if err := os.Remove(taskfilePath); err != nil {
+		t.Fatal(err)
+	}
+
+	waitForToolCount(t, s, 0)
+
+	restored := []byte("version: '3'\ntasks:\n  hello:\n    desc: Recreated hello\n    cmds:\n      - echo hello again\n")
+	if err := os.WriteFile(taskfilePath, restored, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.After(2 * time.Second)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-deadline:
+			s.mu.Lock()
+			tool := s.registeredTools["hello"]
+			s.mu.Unlock()
+			t.Fatalf("timed out waiting for recreated Taskfile reload; last tool state: %+v", tool)
+		case <-ticker.C:
+			s.mu.Lock()
+			tool, ok := s.registeredTools["hello"]
+			s.mu.Unlock()
+			if ok && tool.Description == "Recreated hello" {
+				return
+			}
+		}
+	}
+}
+
 func TestHandleInitialized_WithRoots(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n"), 0o600); err != nil {

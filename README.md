@@ -128,6 +128,7 @@ The server resolves each root's Taskfile graph using `go-task`, then watches the
 4. Notifies connected clients of the change (`notifications/tools/list_changed`)
 
 After each reload, the server recomputes the graph-derived watch set so newly included local Taskfiles start being watched and removed ones stop being watched. File system events are debounced (~200 ms) to avoid redundant reloads during rapid edits. The watcher runs for the lifetime of the server and is cleaned up on shutdown.
+If a root Taskfile becomes invalid or is deleted, the server withdraws that root's tools until a valid Taskfile is restored.
 
 ## Error Handling
 
