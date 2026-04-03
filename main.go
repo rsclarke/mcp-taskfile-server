@@ -487,10 +487,6 @@ func (s *TaskfileServer) buildToolSet() (map[string]mcp.Tool, map[string]mcp.Too
 		}
 	}
 
-	if len(tools) == 0 {
-		return nil, nil, errors.New("no tasks found in any Taskfile")
-	}
-
 	return tools, handlers, nil
 }
 

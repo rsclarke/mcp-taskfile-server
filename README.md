@@ -49,6 +49,7 @@ When roots change at runtime (`notifications/roots/list_changed`), the server au
 ### Dynamic Tool Discovery
 
 The server automatically discovers all tasks in each root's Taskfile.yml and exposes each as an individual MCP tool.
+Roots that contain no public tasks are still loaded successfully; they simply expose zero MCP tools until public tasks appear.
 
 Each tool automatically includes:
 - **Task-specific variables**: Extracted from the task definition with proper defaults

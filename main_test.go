@@ -208,6 +208,17 @@ func TestSyncTools_SkipsInternal(t *testing.T) {
 	}
 }
 
+func TestSyncTools_NoPublicTasks(t *testing.T) {
+	s := newTempServer(t, []byte("version: '3'\ntasks:\n  helper:\n    internal: true\n    cmds:\n      - echo hidden\n"))
+
+	if len(s.registeredTools) != 0 {
+		t.Fatalf("expected no registered tools, got %v", toolNames(s.registeredTools))
+	}
+	if len(onlyRoot(t, s).registeredTools) != 0 {
+		t.Fatalf("expected root registeredTools to be empty, got %v", onlyRoot(t, s).registeredTools)
+	}
+}
+
 func TestSanitizeToolName(t *testing.T) {
 	tests := []struct {
 		input string
@@ -1004,6 +1015,31 @@ func TestLoadAndRegisterTools_RemovesTask(t *testing.T) {
 	}
 }
 
+func TestLoadAndRegisterTools_RemovesAllPublicTasks(t *testing.T) {
+	initial := []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n")
+	s := newTempServer(t, initial)
+
+	if _, ok := s.registeredTools["hello"]; !ok {
+		t.Fatal("expected initial tool 'hello'")
+	}
+
+	updated := []byte("version: '3'\ntasks:\n  helper:\n    internal: true\n    cmds:\n      - echo hidden\n")
+	if err := os.WriteFile(filepath.Join(onlyRoot(t, s).workdir, "Taskfile.yml"), updated, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.loadAndRegisterTools(); err != nil {
+		t.Fatalf("loadAndRegisterTools failed: %v", err)
+	}
+
+	if len(s.registeredTools) != 0 {
+		t.Fatalf("expected all tools to be removed, got %v", toolNames(s.registeredTools))
+	}
+	if len(onlyRoot(t, s).registeredTools) != 0 {
+		t.Fatalf("expected root registeredTools to be empty, got %v", onlyRoot(t, s).registeredTools)
+	}
+}
+
 func TestLoadAndRegisterTools_UpdatesChangedTask(t *testing.T) {
 	initial := []byte("version: '3'\ntasks:\n  greet:\n    desc: Say hello\n    cmds:\n      - echo hello\n")
 	s := newTempServer(t, initial)
@@ -1254,6 +1290,30 @@ func waitForToolCount(t *testing.T, ts *TaskfileServer, count int) {
 		case <-ticker.C:
 			ts.mu.Lock()
 			n := len(ts.registeredTools)
+			ts.mu.Unlock()
+			if n == count {
+				return
+			}
+		}
+	}
+}
+
+// waitForRootCount waits until the server has exactly count loaded roots.
+func waitForRootCount(t *testing.T, ts *TaskfileServer, count int) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-deadline:
+			ts.mu.Lock()
+			n := len(ts.roots)
+			ts.mu.Unlock()
+			t.Fatalf("timed out waiting for %d roots, have %d", count, n)
+		case <-ticker.C:
+			ts.mu.Lock()
+			n := len(ts.roots)
 			ts.mu.Unlock()
 			if n == count {
 				return
@@ -1518,12 +1578,63 @@ func TestBuildToolSet_NoTasks(t *testing.T) {
 		roots: map[string]*rootState{dirToURI(dir): root},
 	}
 
-	_, _, err = s.buildToolSet()
-	if err == nil {
-		t.Fatal("expected error for no tasks, got nil")
+	tools, handlers, err := s.buildToolSet()
+	if err != nil {
+		t.Fatalf("buildToolSet failed: %v", err)
 	}
-	if !strings.Contains(err.Error(), "no tasks found") {
-		t.Errorf("expected 'no tasks found' error, got: %v", err)
+	if len(tools) != 0 {
+		t.Fatalf("expected no tools, got %v", toolNames(tools))
+	}
+	if len(handlers) != 0 {
+		t.Fatalf("expected no handlers, got %d", len(handlers))
+	}
+	if len(root.registeredTools) != 0 {
+		t.Fatalf("expected root registeredTools to be empty, got %v", root.registeredTools)
+	}
+}
+
+func TestHandleInitialized_NoPublicTasks(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  helper:\n    internal: true\n    cmds:\n      - echo hidden\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ts := NewTaskfileServer()
+	ctx := t.Context()
+	uri := dirToURI(dir)
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
+	client.AddRoots(&mcp.Root{URI: uri, Name: "root"})
+
+	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, &mcp.ServerOptions{
+		InitializedHandler:      ts.handleInitialized,
+		RootsListChangedHandler: ts.handleRootsChanged,
+	})
+	ts.mcpServer = server
+	ts.registeredTools = make(map[string]mcp.Tool)
+
+	ct, st := mcp.NewInMemoryTransports()
+	ss, err := server.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ss.Close() })
+
+	cs, err := client.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+
+	waitForRootCount(t, ts, 1)
+	waitForToolCount(t, ts, 0)
+
+	toolsRes, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("ListTools failed: %v", err)
+	}
+	if len(toolsRes.Tools) != 0 {
+		t.Fatalf("expected no tools, got %d", len(toolsRes.Tools))
 	}
 }
 
@@ -1593,6 +1704,56 @@ func TestHandleRootsChanged_TransitionToUnprefixed(t *testing.T) {
 		t.Errorf("expected unprefixed tool 'task2' after N->1 transition, got: %v", toolNames(ts.registeredTools))
 	}
 	ts.mu.Unlock()
+}
+
+func TestHandleRootsChanged_RemoveLastRootClearsTools(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ts := NewTaskfileServer()
+	ctx := t.Context()
+	uri := dirToURI(dir)
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
+	client.AddRoots(&mcp.Root{URI: uri, Name: "root"})
+
+	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, &mcp.ServerOptions{
+		InitializedHandler:      ts.handleInitialized,
+		RootsListChangedHandler: ts.handleRootsChanged,
+	})
+	ts.mcpServer = server
+	ts.registeredTools = make(map[string]mcp.Tool)
+
+	ct, st := mcp.NewInMemoryTransports()
+	ss, err := server.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ss.Close() })
+
+	cs, err := client.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+
+	waitForRootCount(t, ts, 1)
+	waitForTools(t, ts, 1)
+
+	client.RemoveRoots(uri)
+
+	waitForRootCount(t, ts, 0)
+	waitForToolCount(t, ts, 0)
+
+	toolsRes, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("ListTools failed: %v", err)
+	}
+	if len(toolsRes.Tools) != 0 {
+		t.Fatalf("expected no tools after removing last root, got %d", len(toolsRes.Tools))
+	}
 }
 
 func TestReloadRoot_UnknownURI(t *testing.T) {
