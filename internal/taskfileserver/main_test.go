@@ -20,8 +20,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// loadServerFromFixture creates a TaskfileServer from a testdata fixture directory.
-func loadServerFromFixture(t *testing.T, name string) *TaskfileServer {
+// loadServerFromFixture creates a Server from a testdata fixture directory.
+func loadServerFromFixture(t *testing.T, name string) *Server {
 	t.Helper()
 
 	_, filename, _, _ := runtime.Caller(0)
@@ -33,13 +33,13 @@ func loadServerFromFixture(t *testing.T, name string) *TaskfileServer {
 	}
 
 	uri := dirToURI(dir)
-	return &TaskfileServer{
-		roots: map[string]*rootState{uri: root},
+	return &Server{
+		roots: map[string]*Root{uri: root},
 	}
 }
 
-// onlyRoot returns the single rootState from a server, or fails the test.
-func onlyRoot(t *testing.T, s *TaskfileServer) *rootState {
+// onlyRoot returns the single Root from a server, or fails the test.
+func onlyRoot(t *testing.T, s *Server) *Root {
 	t.Helper()
 	if len(s.roots) != 1 {
 		t.Fatalf("expected 1 root, got %d", len(s.roots))
@@ -50,8 +50,8 @@ func onlyRoot(t *testing.T, s *TaskfileServer) *rootState {
 	return nil
 }
 
-// newTestServer creates a TaskfileServer from a fixture with a real *mcp.Server attached.
-func newTestServer(t *testing.T, fixture string) *TaskfileServer {
+// newTestServer creates a Server from a fixture with a real *mcp.Server attached.
+func newTestServer(t *testing.T, fixture string) *Server {
 	t.Helper()
 	s := loadServerFromFixture(t, fixture)
 	s.mcpServer = mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
@@ -1014,7 +1014,7 @@ func TestWatchTaskfiles_CancelStops(t *testing.T) {
 }
 
 // snapshotRoots returns a rootSnapshot slice for use with watchTaskfiles.
-func snapshotRoots(s *TaskfileServer) []rootSnapshot {
+func snapshotRoots(s *Server) []rootSnapshot {
 	snap := make([]rootSnapshot, 0, len(s.roots))
 	for uri := range s.roots {
 		snap = append(snap, rootSnapshot{uri: uri})
@@ -1022,9 +1022,9 @@ func snapshotRoots(s *TaskfileServer) []rootSnapshot {
 	return snap
 }
 
-// newTempServer creates a TaskfileServer backed by a temp directory containing
+// newTempServer creates a Server backed by a temp directory containing
 // the given Taskfile content, with a real *mcp.Server and initial syncTools.
-func newTempServer(t *testing.T, taskfileContent []byte) *TaskfileServer {
+func newTempServer(t *testing.T, taskfileContent []byte) *Server {
 	t.Helper()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), taskfileContent, 0o600); err != nil {
@@ -1033,17 +1033,17 @@ func newTempServer(t *testing.T, taskfileContent []byte) *TaskfileServer {
 	return newServerForDir(t, dir)
 }
 
-// newServerForDir creates a TaskfileServer backed by a given directory,
+// newServerForDir creates a Server backed by a given directory,
 // with a real *mcp.Server and initial syncTools.
-func newServerForDir(t *testing.T, dir string) *TaskfileServer {
+func newServerForDir(t *testing.T, dir string) *Server {
 	t.Helper()
 	root, err := loadRoot(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("loadRoot: %v", err)
 	}
 	uri := dirToURI(dir)
-	s := &TaskfileServer{
-		roots:           map[string]*rootState{uri: root},
+	s := &Server{
+		roots:           map[string]*Root{uri: root},
 		mcpServer:       mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil),
 		registeredTools: make(map[string]mcp.Tool),
 	}
@@ -1313,7 +1313,7 @@ func TestHandleInitialized_WithRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ts := NewTaskfileServer()
+	ts := New()
 	ctx := t.Context()
 
 	rootURI := dirToURI(dir)
@@ -1321,8 +1321,8 @@ func TestHandleInitialized_WithRoots(t *testing.T) {
 	client.AddRoots(&mcp.Root{URI: rootURI, Name: "test"})
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, &mcp.ServerOptions{
-		InitializedHandler:      ts.handleInitialized,
-		RootsListChangedHandler: ts.handleRootsChanged,
+		InitializedHandler:      ts.HandleInitialized,
+		RootsListChangedHandler: ts.HandleRootsChanged,
 	})
 	ts.mcpServer = server
 	ts.registeredTools = make(map[string]mcp.Tool)
@@ -1384,7 +1384,7 @@ func TestHandleRootsChanged_AddAndRemove(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ts := NewTaskfileServer()
+	ts := New()
 	ctx := t.Context()
 
 	uri1 := dirToURI(dir1)
@@ -1394,8 +1394,8 @@ func TestHandleRootsChanged_AddAndRemove(t *testing.T) {
 	client.AddRoots(&mcp.Root{URI: uri1, Name: "root1"})
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, &mcp.ServerOptions{
-		InitializedHandler:      ts.handleInitialized,
-		RootsListChangedHandler: ts.handleRootsChanged,
+		InitializedHandler:      ts.HandleInitialized,
+		RootsListChangedHandler: ts.HandleRootsChanged,
 	})
 	ts.mcpServer = server
 	ts.registeredTools = make(map[string]mcp.Tool)
@@ -1445,7 +1445,7 @@ func TestHandleRootsChanged_AddAndRemove(t *testing.T) {
 }
 
 // waitForTools waits until the server has at least minTools registered.
-func waitForTools(t *testing.T, ts *TaskfileServer, minTools int) {
+func waitForTools(t *testing.T, ts *Server, minTools int) {
 	t.Helper()
 	deadline := time.After(2 * time.Second)
 	ticker := time.NewTicker(50 * time.Millisecond)
@@ -1469,7 +1469,7 @@ func waitForTools(t *testing.T, ts *TaskfileServer, minTools int) {
 }
 
 // waitForToolCount waits until the server has exactly count tools registered.
-func waitForToolCount(t *testing.T, ts *TaskfileServer, count int) {
+func waitForToolCount(t *testing.T, ts *Server, count int) {
 	t.Helper()
 	deadline := time.After(2 * time.Second)
 	ticker := time.NewTicker(50 * time.Millisecond)
@@ -1493,7 +1493,7 @@ func waitForToolCount(t *testing.T, ts *TaskfileServer, count int) {
 }
 
 // waitForRootCount waits until the server has exactly count loaded roots.
-func waitForRootCount(t *testing.T, ts *TaskfileServer, count int) {
+func waitForRootCount(t *testing.T, ts *Server, count int) {
 	t.Helper()
 	deadline := time.After(2 * time.Second)
 	ticker := time.NewTicker(50 * time.Millisecond)
@@ -1742,8 +1742,8 @@ func TestBuildToolSet_ExcludesCollidingToolNamesAcrossRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := &TaskfileServer{
-		roots: map[string]*rootState{
+	s := &Server{
+		roots: map[string]*Root{
 			dirToURI(dir1): r1,
 			dirToURI(dir2): r2,
 		},
@@ -1762,11 +1762,11 @@ func TestBuildToolSet_ExcludesCollidingToolNamesAcrossRoots(t *testing.T) {
 	if got := toolNames(tools); !slices.Equal(got, want) {
 		t.Fatalf("toolNames = %v, want %v", got, want)
 	}
-	if !slices.Equal(r1.registeredTools, []string{"dup_frontend"}) {
-		t.Fatalf("r1.registeredTools = %v, want [dup_frontend]", r1.registeredTools)
+	if len(r1.registeredTools) != 0 {
+		t.Fatalf("expected buildToolSet to leave r1.registeredTools untouched, got %v", r1.registeredTools)
 	}
-	if !slices.Equal(r2.registeredTools, []string{"dup_backend"}) {
-		t.Fatalf("r2.registeredTools = %v, want [dup_backend]", r2.registeredTools)
+	if len(r2.registeredTools) != 0 {
+		t.Fatalf("expected buildToolSet to leave r2.registeredTools untouched, got %v", r2.registeredTools)
 	}
 }
 
@@ -1782,8 +1782,8 @@ func TestBuildToolSet_ExcludesCollidingToolNamesWithinRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := &TaskfileServer{
-		roots: map[string]*rootState{dirToURI(dir): root},
+	s := &Server{
+		roots: map[string]*Root{dirToURI(dir): root},
 	}
 
 	tools, handlers := s.buildToolSet()
@@ -1796,8 +1796,8 @@ func TestBuildToolSet_ExcludesCollidingToolNamesWithinRoot(t *testing.T) {
 	if got := toolNames(tools); !slices.Equal(got, []string{"lint"}) {
 		t.Fatalf("toolNames = %v, want [lint]", got)
 	}
-	if !slices.Equal(root.registeredTools, []string{"lint"}) {
-		t.Fatalf("root.registeredTools = %v, want [lint]", root.registeredTools)
+	if len(root.registeredTools) != 0 {
+		t.Fatalf("expected buildToolSet to leave root.registeredTools untouched, got %v", root.registeredTools)
 	}
 }
 
@@ -1812,8 +1812,8 @@ func TestBuildToolSet_NoTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := &TaskfileServer{
-		roots: map[string]*rootState{dirToURI(dir): root},
+	s := &Server{
+		roots: map[string]*Root{dirToURI(dir): root},
 	}
 
 	tools, handlers := s.buildToolSet()
@@ -1824,7 +1824,7 @@ func TestBuildToolSet_NoTasks(t *testing.T) {
 		t.Fatalf("expected no handlers, got %d", len(handlers))
 	}
 	if len(root.registeredTools) != 0 {
-		t.Fatalf("expected root registeredTools to be empty, got %v", root.registeredTools)
+		t.Fatalf("expected buildToolSet to leave root.registeredTools untouched, got %v", root.registeredTools)
 	}
 }
 
@@ -1834,7 +1834,7 @@ func TestHandleInitialized_NoPublicTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ts := NewTaskfileServer()
+	ts := New()
 	ctx := t.Context()
 	uri := dirToURI(dir)
 
@@ -1842,8 +1842,8 @@ func TestHandleInitialized_NoPublicTasks(t *testing.T) {
 	client.AddRoots(&mcp.Root{URI: uri, Name: "root"})
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, &mcp.ServerOptions{
-		InitializedHandler:      ts.handleInitialized,
-		RootsListChangedHandler: ts.handleRootsChanged,
+		InitializedHandler:      ts.HandleInitialized,
+		RootsListChangedHandler: ts.HandleRootsChanged,
 	})
 	ts.mcpServer = server
 	ts.registeredTools = make(map[string]mcp.Tool)
@@ -1883,7 +1883,7 @@ func TestHandleRootsChanged_TransitionToUnprefixed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ts := NewTaskfileServer()
+	ts := New()
 	ctx := t.Context()
 
 	uri1 := dirToURI(dir1)
@@ -1896,8 +1896,8 @@ func TestHandleRootsChanged_TransitionToUnprefixed(t *testing.T) {
 	)
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, &mcp.ServerOptions{
-		InitializedHandler:      ts.handleInitialized,
-		RootsListChangedHandler: ts.handleRootsChanged,
+		InitializedHandler:      ts.HandleInitialized,
+		RootsListChangedHandler: ts.HandleRootsChanged,
 	})
 	ts.mcpServer = server
 	ts.registeredTools = make(map[string]mcp.Tool)
@@ -1947,7 +1947,7 @@ func TestHandleRootsChanged_RemoveLastRootClearsTools(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ts := NewTaskfileServer()
+	ts := New()
 	ctx := t.Context()
 	uri := dirToURI(dir)
 
@@ -1955,8 +1955,8 @@ func TestHandleRootsChanged_RemoveLastRootClearsTools(t *testing.T) {
 	client.AddRoots(&mcp.Root{URI: uri, Name: "root"})
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, &mcp.ServerOptions{
-		InitializedHandler:      ts.handleInitialized,
-		RootsListChangedHandler: ts.handleRootsChanged,
+		InitializedHandler:      ts.HandleInitialized,
+		RootsListChangedHandler: ts.HandleRootsChanged,
 	})
 	ts.mcpServer = server
 	ts.registeredTools = make(map[string]mcp.Tool)
@@ -2102,7 +2102,7 @@ func TestToolListChangedNotification_OnFileChange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ts := NewTaskfileServer()
+	ts := New()
 	ctx := t.Context()
 
 	rootURI := dirToURI(dir)
@@ -2121,8 +2121,8 @@ func TestToolListChangedNotification_OnFileChange(t *testing.T) {
 	client.AddRoots(&mcp.Root{URI: rootURI, Name: "test"})
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, &mcp.ServerOptions{
-		InitializedHandler:      ts.handleInitialized,
-		RootsListChangedHandler: ts.handleRootsChanged,
+		InitializedHandler:      ts.HandleInitialized,
+		RootsListChangedHandler: ts.HandleRootsChanged,
 	})
 	ts.mcpServer = server
 	ts.registeredTools = make(map[string]mcp.Tool)

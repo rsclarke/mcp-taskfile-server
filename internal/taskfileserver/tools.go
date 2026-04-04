@@ -17,7 +17,7 @@ import (
 // The tool name is sanitized for MCP compatibility; the description
 // references the original Taskfile task name for clarity. The prefix
 // parameter is used in multi-root mode to namespace tool names.
-func createToolForTask(root *rootState, prefix, taskName string, taskDef *ast.Task) *mcp.Tool {
+func createToolForTask(root *Root, prefix, taskName string, taskDef *ast.Task) *mcp.Tool {
 	toolName := sanitizeToolName(prefixedToolName(prefix, taskName))
 
 	description := taskDef.Desc
@@ -97,19 +97,18 @@ type toolPlan struct {
 }
 
 // buildToolSet discovers all tasks across all roots and returns tool definitions
-// and handlers without registering them on a server.
-func (s *TaskfileServer) buildToolSet() (map[string]mcp.Tool, map[string]mcp.ToolHandler) {
+// and handlers without mutating server or root registration state.
+func (s *Server) buildToolSet() (map[string]mcp.Tool, map[string]mcp.ToolHandler) {
 	plan := s.buildToolPlan()
-	s.applyRootToolNames(plan.rootToolNames)
 	return plan.tools, plan.handlers
 }
 
 // buildToolPlan computes the desired tool registration state without mutating
 // the server or roots.
-func (s *TaskfileServer) buildToolPlan() toolPlan {
+func (s *Server) buildToolPlan() toolPlan {
 	type toolCandidate struct {
 		rootURI  string
-		root     *rootState
+		root     *Root
 		taskName string
 		tool     mcp.Tool
 		handler  mcp.ToolHandler
@@ -176,7 +175,7 @@ func (s *TaskfileServer) buildToolPlan() toolPlan {
 	return plan
 }
 
-func (s *TaskfileServer) applyRootToolNames(rootToolNames map[string][]string) {
+func (s *Server) applyRootToolNames(rootToolNames map[string][]string) {
 	for uri, root := range s.roots {
 		root.registeredTools = cloneStrings(rootToolNames[uri])
 	}
@@ -201,7 +200,7 @@ func toolsEqual(a, b *mcp.Tool) bool {
 
 // syncTools builds the current tool set, diffs it against previously
 // registered tools, and adds/removes tools on the MCP server as needed.
-func (s *TaskfileServer) syncTools() error {
+func (s *Server) syncTools() error {
 	plan := s.buildToolPlan()
 
 	// Remove tools that no longer exist or have changed

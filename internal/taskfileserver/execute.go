@@ -14,7 +14,7 @@ import (
 
 // createTaskHandler creates a handler function for a specific task.
 // For wildcard tasks, it reconstructs the full task name from the MATCH argument.
-func createTaskHandler(root *rootState, taskName string) mcp.ToolHandler {
+func createTaskHandler(root *Root, taskName string) mcp.ToolHandler {
 	return createTaskHandlerForWorkdir(root.workdir, taskName)
 }
 

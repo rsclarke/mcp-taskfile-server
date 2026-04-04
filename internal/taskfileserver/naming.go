@@ -79,7 +79,7 @@ func sanitizeRootPrefix(name string) string {
 // rootPrefix returns the tool name prefix for a root. When there is only one
 // root the prefix is empty; with multiple roots it is derived from the root
 // directory's basename.
-func (s *TaskfileServer) rootPrefix(root *rootState) string {
+func (s *Server) rootPrefix(root *Root) string {
 	if len(s.roots) <= 1 {
 		return ""
 	}

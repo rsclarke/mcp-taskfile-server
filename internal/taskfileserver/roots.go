@@ -65,8 +65,8 @@ func isWindowsDriveURIPath(path string) bool {
 	return (drive >= 'a' && drive <= 'z') || (drive >= 'A' && drive <= 'Z')
 }
 
-// loadRoot creates a new rootState by loading the Taskfile from the given directory.
-func loadRoot(ctx context.Context, dir string) (*rootState, error) {
+// loadRoot creates a new Root by loading the Taskfile from the given directory.
+func loadRoot(ctx context.Context, dir string) (*Root, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve path: %w", err)
@@ -86,7 +86,7 @@ func loadRoot(ctx context.Context, dir string) (*rootState, error) {
 		return nil, fmt.Errorf("failed to setup task executor for %s: %w", abs, err)
 	}
 
-	return &rootState{
+	return &Root{
 		taskfile:       executor.Taskfile,
 		workdir:        abs,
 		watchDirs:      watchDirs,
@@ -95,21 +95,21 @@ func loadRoot(ctx context.Context, dir string) (*rootState, error) {
 }
 
 // unloadRoot removes and cleans up the root with the given URI.
-func (s *TaskfileServer) unloadRoot(uri string) {
+func (s *Server) unloadRoot(uri string) {
 	delete(s.roots, uri)
 }
 
 // disableRootTools clears the loaded Taskfile state for a root and syncs the
 // server so any previously registered tools are withdrawn. The existing watch
 // set is preserved so restoring the Taskfile can be detected and reloaded.
-func (s *TaskfileServer) disableRootTools(root *rootState) error {
+func (s *Server) disableRootTools(root *Root) error {
 	root.taskfile = nil
 	return s.syncTools()
 }
 
 // reloadRoot re-creates the task executor for a given root URI and syncs
 // the global MCP tool set.
-func (s *TaskfileServer) reloadRoot(ctx context.Context, uri string) error {
+func (s *Server) reloadRoot(ctx context.Context, uri string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -145,7 +145,7 @@ func (s *TaskfileServer) reloadRoot(ctx context.Context, uri string) error {
 // loadAndRegisterTools re-creates the task executor from the single root
 // working directory and syncs the MCP tool set. This is a convenience
 // wrapper for the single-root case.
-func (s *TaskfileServer) loadAndRegisterTools() error {
+func (s *Server) loadAndRegisterTools() error {
 	for uri := range s.roots {
 		return s.reloadRoot(context.Background(), uri)
 	}

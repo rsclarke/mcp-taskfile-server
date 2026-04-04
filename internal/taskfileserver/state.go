@@ -8,8 +8,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// rootState holds the loaded per-root Taskfile data.
-type rootState struct {
+// Root holds the loaded per-root Taskfile data.
+type Root struct {
 	taskfile        *ast.Taskfile
 	workdir         string
 	registeredTools []string
@@ -17,9 +17,9 @@ type rootState struct {
 	watchTaskfiles  map[string]struct{}
 }
 
-// TaskfileServer represents our MCP server for Taskfile.yml.
-type TaskfileServer struct {
-	roots           map[string]*rootState
+// Server represents our MCP server for Taskfile.yml.
+type Server struct {
+	roots           map[string]*Root
 	mcpServer       *mcp.Server
 	registeredTools map[string]mcp.Tool
 	mu              sync.Mutex

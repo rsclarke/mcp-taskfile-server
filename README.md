@@ -154,8 +154,8 @@ This server executes arbitrary commands defined in your Taskfile. Only use it in
 To modify or extend the server:
 
 1. **Server Setup**: The MCP server is created using `mcp.NewServer()` with `InitializedHandler` and `RootsListChangedHandler`
-2. **Root Loading**: `handleInitialized()` calls `ListRoots` to discover directories; `handleRootsChanged()` diffs and updates the root set
-3. **Dynamic Discovery**: Tasks are discovered and built into a tool set via `buildToolSet()`
+2. **Root Loading**: `HandleInitialized()` calls `ListRoots` to discover directories; `HandleRootsChanged()` diffs and updates the root set
+3. **Dynamic Discovery**: `buildToolPlan()` computes the desired tool state; `syncTools()` applies it to MCP registration and per-root bookkeeping
 4. **Tool Generation**: Each task becomes an MCP tool via `createToolForTask()`
 5. **Variable Extraction**: Task variables are automatically extracted for schema generation
 6. **Handler Creation**: Each task gets its own handler via `createTaskHandler()`
@@ -164,12 +164,12 @@ To modify or extend the server:
 
 ### Key Components
 
-- **`NewTaskfileServer()`**: Creates an empty server; roots are loaded after the client handshake
-- **`handleInitialized()`**: Requests roots from the client, loads each root's Taskfile, syncs tools, and starts file watchers
-- **`handleRootsChanged()`**: Diffs the current root set against the client's updated list, adding/removing roots and re-syncing tools
-- **`loadRoot()` / `unloadRoot()`**: Creates or tears down a per-root executor and file watcher
+- **`New()`**: Creates an empty server; roots are loaded after the client handshake
+- **`HandleInitialized()`**: Requests roots from the client, loads each root's Taskfile, syncs tools, and starts file watchers
+- **`HandleRootsChanged()`**: Diffs the current root set against the client's updated list, adding/removing roots and re-syncing tools
+- **`loadRoot()` / `unloadRoot()`**: Loads or removes per-root Taskfile data and watch-set state
 - **`loadTaskfileWatchSet()`**: Resolves the local Taskfile graph and derives the Taskfiles and parent directories to watch
-- **`buildToolSet()`**: Discovers tasks across all roots and builds the set of MCP tools and handlers
+- **`buildToolPlan()`**: Computes the desired MCP tool set, handlers, and per-root registration state without mutating the server
 - **`createToolForTask()`**: Generates MCP tool schema from task definition
 - **`createTaskHandler()`**: Creates execution handler for each task
 - **`syncTools()`**: Diffs current tasks against registered tools and adds/removes as needed

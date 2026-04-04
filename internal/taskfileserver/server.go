@@ -12,20 +12,15 @@ import (
 )
 
 // New creates a new Taskfile MCP server.
-func New() *TaskfileServer {
-	return &TaskfileServer{
-		roots:           make(map[string]*rootState),
+func New() *Server {
+	return &Server{
+		roots:           make(map[string]*Root),
 		registeredTools: make(map[string]mcp.Tool),
 	}
 }
 
-// NewTaskfileServer creates a new Taskfile MCP server.
-func NewTaskfileServer() *TaskfileServer {
-	return New()
-}
-
 // SetMCPServer attaches the live MCP server instance used for tool updates.
-func (s *TaskfileServer) SetMCPServer(server *mcp.Server) {
+func (s *Server) SetMCPServer(server *mcp.Server) {
 	s.mcpServer = server
 }
 
@@ -38,7 +33,7 @@ func isMethodNotFound(err error) bool {
 
 // loadRootsFromSession queries the client for its root list and loads each
 // one. If the client does not support roots, it falls back to os.Getwd().
-func (s *TaskfileServer) loadRootsFromSession(ctx context.Context, session *mcp.ServerSession) error {
+func (s *Server) loadRootsFromSession(ctx context.Context, session *mcp.ServerSession) error {
 	rootRes, err := session.ListRoots(ctx, nil)
 	if err != nil {
 		if !isMethodNotFound(err) {
@@ -66,7 +61,7 @@ func (s *TaskfileServer) loadRootsFromSession(ctx context.Context, session *mcp.
 		return nil
 	}
 
-	loadedRoots := make(map[string]*rootState, len(rootRes.Roots))
+	loadedRoots := make(map[string]*Root, len(rootRes.Roots))
 	for _, r := range rootRes.Roots {
 		dir, parseErr := uriToDir(r.URI)
 		if parseErr != nil {
@@ -103,18 +98,14 @@ func (s *TaskfileServer) loadRootsFromSession(ctx context.Context, session *mcp.
 }
 
 // HandleInitialized is called after the client handshake completes.
-func (s *TaskfileServer) HandleInitialized(ctx context.Context, req *mcp.InitializedRequest) {
+func (s *Server) HandleInitialized(ctx context.Context, req *mcp.InitializedRequest) {
 	if err := s.loadRootsFromSession(ctx, req.Session); err != nil {
 		log.Printf("failed to initialize roots: %v", err)
 	}
 }
 
-func (s *TaskfileServer) handleInitialized(ctx context.Context, req *mcp.InitializedRequest) {
-	s.HandleInitialized(ctx, req)
-}
-
 // HandleRootsChanged is called when the client sends roots/list_changed.
-func (s *TaskfileServer) HandleRootsChanged(ctx context.Context, req *mcp.RootsListChangedRequest) {
+func (s *Server) HandleRootsChanged(ctx context.Context, req *mcp.RootsListChangedRequest) {
 	rootRes, err := req.Session.ListRoots(ctx, nil)
 	if err != nil {
 		log.Printf("failed to list roots after change: %v", err)
@@ -134,7 +125,7 @@ func (s *TaskfileServer) HandleRootsChanged(ctx context.Context, req *mcp.RootsL
 	}
 	s.mu.Unlock()
 
-	loadedRoots := make(map[string]*rootState)
+	loadedRoots := make(map[string]*Root)
 	for _, r := range rootRes.Roots {
 		if _, exists := existing[r.URI]; exists {
 			continue
@@ -175,8 +166,4 @@ func (s *TaskfileServer) HandleRootsChanged(ctx context.Context, req *mcp.RootsL
 		log.Printf("failed to sync tools after roots change: %v", syncErr)
 	}
 	s.restartWatchers(ctx)
-}
-
-func (s *TaskfileServer) handleRootsChanged(ctx context.Context, req *mcp.RootsListChangedRequest) {
-	s.HandleRootsChanged(ctx, req)
 }

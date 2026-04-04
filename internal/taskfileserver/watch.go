@@ -12,7 +12,7 @@ import (
 )
 
 // rootWatchState returns copies of the current watch configuration for a root.
-func (s *TaskfileServer) rootWatchState(uri string) ([]string, map[string]struct{}, bool) {
+func (s *Server) rootWatchState(uri string) ([]string, map[string]struct{}, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -50,7 +50,7 @@ func syncWatcherDirs(watcher *fsnotify.Watcher, current map[string]struct{}, des
 
 // watchRootTaskfiles watches a single root's resolved Taskfile graph for
 // changes and reloads tools when one of those files is modified.
-func (s *TaskfileServer) watchRootTaskfiles(ctx context.Context, uri string) error {
+func (s *Server) watchRootTaskfiles(ctx context.Context, uri string) error {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return fmt.Errorf("failed to create file watcher: %w", err)
@@ -131,7 +131,7 @@ func (s *TaskfileServer) watchRootTaskfiles(ctx context.Context, uri string) err
 
 // watchTaskfiles starts file watchers for the given roots and blocks until the
 // context is cancelled. The caller must provide a snapshot captured under lock.
-func (s *TaskfileServer) watchTaskfiles(ctx context.Context, roots []rootSnapshot) error {
+func (s *Server) watchTaskfiles(ctx context.Context, roots []rootSnapshot) error {
 	var wg sync.WaitGroup
 	var firstErr error
 	var errOnce sync.Once
@@ -152,7 +152,7 @@ func (s *TaskfileServer) watchTaskfiles(ctx context.Context, roots []rootSnapsho
 // then starts new ones for all current roots. The provided ctx is
 // intentionally detached via context.WithoutCancel because callers pass
 // request-scoped contexts that are cancelled after the handler returns.
-func (s *TaskfileServer) restartWatchers(ctx context.Context) {
+func (s *Server) restartWatchers(ctx context.Context) {
 	s.mu.Lock()
 
 	// Capture previous watcher generation's cancel and done channel.
