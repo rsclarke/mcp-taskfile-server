@@ -12,10 +12,16 @@ import (
 )
 
 // rootWatchState returns copies of the current watch configuration for a root.
-func (s *TaskfileServer) rootWatchState(root *rootState) ([]string, map[string]struct{}) {
+func (s *TaskfileServer) rootWatchState(uri string) ([]string, map[string]struct{}, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return cloneStrings(root.watchDirs), cloneStringSet(root.watchTaskfiles)
+
+	root, ok := s.roots[uri]
+	if !ok {
+		return nil, nil, false
+	}
+
+	return cloneStrings(root.watchDirs), cloneStringSet(root.watchTaskfiles), true
 }
 
 // syncWatcherDirs ensures the fsnotify watcher is subscribed to the provided
@@ -44,26 +50,19 @@ func syncWatcherDirs(watcher *fsnotify.Watcher, current map[string]struct{}, des
 
 // watchRootTaskfiles watches a single root's resolved Taskfile graph for
 // changes and reloads tools when one of those files is modified.
-func (s *TaskfileServer) watchRootTaskfiles(ctx context.Context, uri string, root *rootState) error {
+func (s *TaskfileServer) watchRootTaskfiles(ctx context.Context, uri string) error {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return fmt.Errorf("failed to create file watcher: %w", err)
 	}
-
-	s.mu.Lock()
-	root.watcher = watcher
-	s.mu.Unlock()
-
 	defer func() {
 		_ = watcher.Close()
-		s.mu.Lock()
-		if root.watcher == watcher {
-			root.watcher = nil
-		}
-		s.mu.Unlock()
 	}()
 
-	watchDirs, watchTaskfiles := s.rootWatchState(root)
+	watchDirs, watchTaskfiles, ok := s.rootWatchState(uri)
+	if !ok {
+		return nil
+	}
 	currentWatchDirs := make(map[string]struct{}, len(watchDirs))
 	currentWatchDirs, err = syncWatcherDirs(watcher, currentWatchDirs, watchDirs)
 	if err != nil {
@@ -94,7 +93,10 @@ func (s *TaskfileServer) watchRootTaskfiles(ctx context.Context, uri string, roo
 				continue
 			}
 
-			watchDirs, watchTaskfiles = s.rootWatchState(root)
+			watchDirs, watchTaskfiles, ok = s.rootWatchState(uri)
+			if !ok {
+				return nil
+			}
 			currentWatchDirs, err = syncWatcherDirs(watcher, currentWatchDirs, watchDirs)
 			if err != nil {
 				if ctx.Err() != nil {
@@ -136,7 +138,7 @@ func (s *TaskfileServer) watchTaskfiles(ctx context.Context, roots []rootSnapsho
 
 	for _, rs := range roots {
 		wg.Go(func() {
-			if err := s.watchRootTaskfiles(ctx, rs.uri, rs.root); err != nil {
+			if err := s.watchRootTaskfiles(ctx, rs.uri); err != nil {
 				errOnce.Do(func() { firstErr = err })
 			}
 		})
@@ -146,22 +148,21 @@ func (s *TaskfileServer) watchTaskfiles(ctx context.Context, roots []rootSnapsho
 	return firstErr
 }
 
-// restartWatchers cancels any running file watchers, waits for them to
-// exit, then starts new ones for all current roots. The caller must hold
-// s.mu; it is temporarily released while waiting for old watchers so
-// that watcher goroutines calling reloadRoot can acquire the lock. The
-// provided ctx is intentionally detached via context.WithoutCancel
-// because callers pass request-scoped contexts that are cancelled after
-// the handler returns.
+// restartWatchers cancels any running file watchers, waits for them to exit,
+// then starts new ones for all current roots. The provided ctx is
+// intentionally detached via context.WithoutCancel because callers pass
+// request-scoped contexts that are cancelled after the handler returns.
 func (s *TaskfileServer) restartWatchers(ctx context.Context) {
+	s.mu.Lock()
+
 	// Capture previous watcher generation's cancel and done channel.
 	prevCancel := s.watchCancel
 	prevDone := s.watchDone
 
 	// Snapshot roots while we hold the lock.
 	snap := make([]rootSnapshot, 0, len(s.roots))
-	for uri, root := range s.roots {
-		snap = append(snap, rootSnapshot{uri: uri, root: root})
+	for uri := range s.roots {
+		snap = append(snap, rootSnapshot{uri: uri})
 	}
 
 	// Prepare the new watcher generation before releasing the lock.
@@ -171,17 +172,14 @@ func (s *TaskfileServer) restartWatchers(ctx context.Context) {
 	done := make(chan struct{})
 	s.watchCancel = cancel
 	s.watchDone = done
-
-	// Release lock while waiting for old watchers so they can acquire
-	// it during teardown (e.g. clearing root.watcher).
 	s.mu.Unlock()
+
 	if prevCancel != nil {
 		prevCancel()
 	}
 	if prevDone != nil {
 		<-prevDone
 	}
-	s.mu.Lock()
 
 	go func() {
 		defer close(done)

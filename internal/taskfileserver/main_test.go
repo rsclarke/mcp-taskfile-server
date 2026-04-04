@@ -1016,8 +1016,8 @@ func TestWatchTaskfiles_CancelStops(t *testing.T) {
 // snapshotRoots returns a rootSnapshot slice for use with watchTaskfiles.
 func snapshotRoots(s *TaskfileServer) []rootSnapshot {
 	snap := make([]rootSnapshot, 0, len(s.roots))
-	for uri, root := range s.roots {
-		snap = append(snap, rootSnapshot{uri: uri, root: root})
+	for uri := range s.roots {
+		snap = append(snap, rootSnapshot{uri: uri})
 	}
 	return snap
 }

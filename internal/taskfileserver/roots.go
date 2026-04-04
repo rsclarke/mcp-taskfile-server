@@ -87,7 +87,6 @@ func loadRoot(ctx context.Context, dir string) (*rootState, error) {
 	}
 
 	return &rootState{
-		executor:       executor,
 		taskfile:       executor.Taskfile,
 		workdir:        abs,
 		watchDirs:      watchDirs,
@@ -97,13 +96,6 @@ func loadRoot(ctx context.Context, dir string) (*rootState, error) {
 
 // unloadRoot removes and cleans up the root with the given URI.
 func (s *TaskfileServer) unloadRoot(uri string) {
-	root, ok := s.roots[uri]
-	if !ok {
-		return
-	}
-	if root.watcher != nil {
-		_ = root.watcher.Close()
-	}
 	delete(s.roots, uri)
 }
 
@@ -111,7 +103,6 @@ func (s *TaskfileServer) unloadRoot(uri string) {
 // server so any previously registered tools are withdrawn. The existing watch
 // set is preserved so restoring the Taskfile can be detected and reloaded.
 func (s *TaskfileServer) disableRootTools(root *rootState) error {
-	root.executor = nil
 	root.taskfile = nil
 	return s.syncTools()
 }
@@ -145,7 +136,6 @@ func (s *TaskfileServer) reloadRoot(ctx context.Context, uri string) error {
 		}
 		return fmt.Errorf("failed to setup task executor for %s: %w", root.workdir, err)
 	}
-	root.executor = executor
 	root.taskfile = executor.Taskfile
 	root.watchDirs = watchDirs
 	root.watchTaskfiles = watchTaskfiles

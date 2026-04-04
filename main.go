@@ -18,7 +18,7 @@ var (
 
 func run() error {
 	// Create taskfile server
-	taskfileServer := taskfileserver.NewTaskfileServer()
+	taskfileServer := taskfileserver.New()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -90,26 +90,43 @@ func createToolForTask(root *rootState, prefix, taskName string, taskDef *ast.Ta
 	}
 }
 
+type toolPlan struct {
+	tools         map[string]mcp.Tool
+	handlers      map[string]mcp.ToolHandler
+	rootToolNames map[string][]string
+}
+
 // buildToolSet discovers all tasks across all roots and returns tool definitions
-// and handlers without registering them on a server. It also populates each
-// root's registeredTools list.
+// and handlers without registering them on a server.
 func (s *TaskfileServer) buildToolSet() (map[string]mcp.Tool, map[string]mcp.ToolHandler) {
+	plan := s.buildToolPlan()
+	s.applyRootToolNames(plan.rootToolNames)
+	return plan.tools, plan.handlers
+}
+
+// buildToolPlan computes the desired tool registration state without mutating
+// the server or roots.
+func (s *TaskfileServer) buildToolPlan() toolPlan {
 	type toolCandidate struct {
+		rootURI  string
 		root     *rootState
 		taskName string
 		tool     mcp.Tool
 		handler  mcp.ToolHandler
 	}
 
-	tools := make(map[string]mcp.Tool)
-	handlers := make(map[string]mcp.ToolHandler)
+	plan := toolPlan{
+		tools:         make(map[string]mcp.Tool),
+		handlers:      make(map[string]mcp.ToolHandler),
+		rootToolNames: make(map[string][]string, len(s.roots)),
+	}
 	candidates := make(map[string][]toolCandidate)
 
-	for _, root := range s.roots {
-		root.registeredTools = nil
+	for uri := range s.roots {
+		plan.rootToolNames[uri] = nil
 	}
 
-	for _, root := range s.roots {
+	for uri, root := range s.roots {
 		if root.taskfile == nil || root.taskfile.Tasks == nil {
 			continue
 		}
@@ -123,10 +140,11 @@ func (s *TaskfileServer) buildToolSet() (map[string]mcp.Tool, map[string]mcp.Too
 
 			tool := createToolForTask(root, prefix, taskName, taskDef)
 			candidates[tool.Name] = append(candidates[tool.Name], toolCandidate{
+				rootURI:  uri,
 				root:     root,
 				taskName: taskName,
 				tool:     *tool,
-				handler:  createTaskHandler(root, taskName),
+				handler:  createTaskHandlerForWorkdir(root.workdir, taskName),
 			})
 		}
 	}
@@ -150,12 +168,18 @@ func (s *TaskfileServer) buildToolSet() (map[string]mcp.Tool, map[string]mcp.Too
 		}
 
 		candidate := group[0]
-		tools[name] = candidate.tool
-		handlers[name] = candidate.handler
-		candidate.root.registeredTools = append(candidate.root.registeredTools, name)
+		plan.tools[name] = candidate.tool
+		plan.handlers[name] = candidate.handler
+		plan.rootToolNames[candidate.rootURI] = append(plan.rootToolNames[candidate.rootURI], name)
 	}
 
-	return tools, handlers
+	return plan
+}
+
+func (s *TaskfileServer) applyRootToolNames(rootToolNames map[string][]string) {
+	for uri, root := range s.roots {
+		root.registeredTools = cloneStrings(rootToolNames[uri])
+	}
 }
 
 // toolsEqual reports whether two tool definitions are equivalent
@@ -178,12 +202,12 @@ func toolsEqual(a, b *mcp.Tool) bool {
 // syncTools builds the current tool set, diffs it against previously
 // registered tools, and adds/removes tools on the MCP server as needed.
 func (s *TaskfileServer) syncTools() error {
-	tools, handlers := s.buildToolSet()
+	plan := s.buildToolPlan()
 
 	// Remove tools that no longer exist or have changed
 	var stale []string
 	for name, old := range s.registeredTools {
-		if newTool, ok := tools[name]; !ok {
+		if newTool, ok := plan.tools[name]; !ok {
 			stale = append(stale, name)
 		} else if !toolsEqual(&old, &newTool) {
 			stale = append(stale, name)
@@ -194,14 +218,15 @@ func (s *TaskfileServer) syncTools() error {
 	}
 
 	// Add tools that are new or were removed above due to changes
-	for name, tool := range tools {
+	for name, tool := range plan.tools {
 		if old, ok := s.registeredTools[name]; ok && toolsEqual(&old, &tool) {
 			continue
 		}
 		t := tool
-		s.mcpServer.AddTool(&t, handlers[name])
+		s.mcpServer.AddTool(&t, plan.handlers[name])
 	}
 
-	s.registeredTools = tools
+	s.applyRootToolNames(plan.rootToolNames)
+	s.registeredTools = plan.tools
 	return nil
 }

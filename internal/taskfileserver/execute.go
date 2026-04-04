@@ -15,6 +15,10 @@ import (
 // createTaskHandler creates a handler function for a specific task.
 // For wildcard tasks, it reconstructs the full task name from the MATCH argument.
 func createTaskHandler(root *rootState, taskName string) mcp.ToolHandler {
+	return createTaskHandlerForWorkdir(root.workdir, taskName)
+}
+
+func createTaskHandlerForWorkdir(workdir, taskName string) mcp.ToolHandler {
 	wildcard := isWildcardTask(taskName)
 	wildcardCount := countWildcards(taskName)
 
@@ -68,7 +72,7 @@ func createTaskHandler(root *rootState, taskName string) mcp.ToolHandler {
 
 		// Create a new executor with output capture for this execution
 		executor := task.NewExecutor(
-			task.WithDir(root.workdir),
+			task.WithDir(workdir),
 			task.WithStdout(&stdout),
 			task.WithStderr(&stderr),
 			task.WithSilent(true),
