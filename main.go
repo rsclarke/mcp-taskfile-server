@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/rsclarke/mcp-taskfile-server/internal/taskfileserver"
 )
 
 // Build-time variables set via -ldflags.
@@ -17,7 +18,7 @@ var (
 
 func run() error {
 	// Create taskfile server
-	taskfileServer := NewTaskfileServer()
+	taskfileServer := taskfileserver.NewTaskfileServer()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -29,12 +30,11 @@ func run() error {
 			Version: serverVersion,
 		},
 		&mcp.ServerOptions{
-			InitializedHandler:      taskfileServer.handleInitialized,
-			RootsListChangedHandler: taskfileServer.handleRootsChanged,
+			InitializedHandler:      taskfileServer.HandleInitialized,
+			RootsListChangedHandler: taskfileServer.HandleRootsChanged,
 		},
 	)
-	taskfileServer.mcpServer = mcpServer
-	taskfileServer.registeredTools = make(map[string]mcp.Tool)
+	taskfileServer.SetMCPServer(mcpServer)
 
 	// Start the stdio server
 	if err := mcpServer.Run(ctx, &mcp.StdioTransport{}); err != nil {
