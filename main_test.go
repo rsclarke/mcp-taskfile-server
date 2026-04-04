@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -217,6 +218,8 @@ func TestSyncTools_NoPublicTasks(t *testing.T) {
 }
 
 func TestSanitizeToolName(t *testing.T) {
+	validName := regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}$`)
+
 	tests := []struct {
 		input string
 		want  string
@@ -231,6 +234,9 @@ func TestSanitizeToolName(t *testing.T) {
 		{"deploy:*:*", "deploy"},
 		{"uv:add:*", "uv_add"},
 		{"docs:serve", "docs_serve"},
+		{"build/dev", "build_dev"},
+		{"release prod", "release_prod"},
+		{"café", "caf_"},
 	}
 
 	for _, tt := range tests {
@@ -239,7 +245,27 @@ func TestSanitizeToolName(t *testing.T) {
 			if got != tt.want {
 				t.Errorf("sanitizeToolName(%q) = %q, want %q", tt.input, got, tt.want)
 			}
+			if !validName.MatchString(got) {
+				t.Errorf("sanitizeToolName(%q) = %q, which does not match MCP tool name rules", tt.input, got)
+			}
 		})
+	}
+}
+
+func TestSanitizeToolName_Overlength(t *testing.T) {
+	input := strings.Repeat("a", 200)
+	got := sanitizeToolName(input)
+	wantPrefix := strings.Repeat("a", maxToolNameLength-len(shortToolNameHash(input))-1)
+	wantSuffix := "_" + shortToolNameHash(input)
+
+	if len(got) != maxToolNameLength {
+		t.Fatalf("len(sanitizeToolName(%q)) = %d, want %d", input[:16], len(got), maxToolNameLength)
+	}
+	if !strings.HasPrefix(got, wantPrefix) {
+		t.Fatalf("sanitizeToolName(%q) = %q, want prefix %q", input[:16], got, wantPrefix)
+	}
+	if !strings.HasSuffix(got, wantSuffix) {
+		t.Fatalf("sanitizeToolName(%q) = %q, want suffix %q", input[:16], got, wantSuffix)
 	}
 }
 
@@ -1986,6 +2012,22 @@ func TestCreateToolForTask_WithPrefix(t *testing.T) {
 
 	if tool.Name != "myproject_greet" {
 		t.Errorf("Name = %q, want %q", tool.Name, "myproject_greet")
+	}
+}
+
+func TestCreateToolForTask_WithPrefix_EnforcesMaxLength(t *testing.T) {
+	s := loadServerFromFixture(t, "basic")
+	root := onlyRoot(t, s)
+	taskDef := lookupTask(t, root.taskfile, "greet")
+	prefix := strings.Repeat("project", 20)
+
+	tool := createToolForTask(root, prefix, "greet", taskDef)
+
+	if len(tool.Name) != maxToolNameLength {
+		t.Fatalf("len(tool.Name) = %d, want %d", len(tool.Name), maxToolNameLength)
+	}
+	if matched, _ := regexp.MatchString(`^[A-Za-z0-9_.-]{1,128}$`, tool.Name); !matched {
+		t.Fatalf("tool.Name = %q, want MCP-valid name", tool.Name)
 	}
 }
 

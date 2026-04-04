@@ -4,6 +4,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,10 +35,18 @@ var (
 	serverVersion = "dev"
 )
 
-// sanitizeToolName converts a Taskfile task name into a valid MCP tool name.
-// It replaces colons with underscores and strips wildcard (*) segments.
-// The returned name conforms to the MCP spec: [a-zA-Z0-9_.-]{1,128}.
+const maxToolNameLength = 128
+
+// invalidToolNameChars matches characters not recommended by the MCP tool name spec.
+var invalidToolNameChars = regexp.MustCompile(`[^a-zA-Z0-9_.\-]`)
+
+// sanitizeToolName converts a candidate tool name into an MCP-valid name.
+// It preserves Task namespace semantics by replacing colons with underscores,
+// strips wildcard (*) segments, replaces any remaining unsupported characters
+// with underscores, and caps the final name at the MCP-recommended length.
 func sanitizeToolName(taskName string) string {
+	original := taskName
+
 	// Replace colons with underscores
 	name := strings.ReplaceAll(taskName, ":", "_")
 
@@ -51,7 +61,25 @@ func sanitizeToolName(taskName string) string {
 	// Trim trailing underscores left after stripping wildcards
 	name = strings.TrimRight(name, "_")
 
+	// Replace any remaining unsupported characters.
+	name = invalidToolNameChars.ReplaceAllString(name, "_")
+
+	if name == "" {
+		name = "task_" + shortToolNameHash(original)
+	}
+
+	if len(name) > maxToolNameLength {
+		suffix := "_" + shortToolNameHash(original)
+		keep := max(1, maxToolNameLength-len(suffix))
+		name = name[:keep] + suffix
+	}
+
 	return name
+}
+
+func shortToolNameHash(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])[:8]
 }
 
 // isWildcardTask returns true if the task name contains wildcard segments.
@@ -138,13 +166,10 @@ func isWindowsDriveURIPath(path string) bool {
 	return (drive >= 'a' && drive <= 'z') || (drive >= 'A' && drive <= 'Z')
 }
 
-// validRootPrefixChars matches characters NOT allowed in a root prefix.
-var validRootPrefixChars = regexp.MustCompile(`[^a-zA-Z0-9_.\-]`)
-
 // sanitizeRootPrefix converts a root name or directory basename into a valid
 // MCP tool name prefix component.
 func sanitizeRootPrefix(name string) string {
-	s := validRootPrefixChars.ReplaceAllString(name, "_")
+	s := invalidToolNameChars.ReplaceAllString(name, "_")
 	s = strings.Trim(s, "_")
 	if s == "" {
 		return "root"
@@ -420,7 +445,7 @@ func createTaskHandler(root *rootState, taskName string) mcp.ToolHandler {
 // references the original Taskfile task name for clarity. The prefix
 // parameter is used in multi-root mode to namespace tool names.
 func createToolForTask(root *rootState, prefix, taskName string, taskDef *ast.Task) *mcp.Tool {
-	toolName := prefixedToolName(prefix, sanitizeToolName(taskName))
+	toolName := sanitizeToolName(prefixedToolName(prefix, taskName))
 
 	description := taskDef.Desc
 	if description == "" {

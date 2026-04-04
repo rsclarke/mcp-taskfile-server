@@ -57,7 +57,7 @@ Each tool automatically includes:
 
 ## Tool Name Mapping
 
-Taskfile task names can contain characters (`:`, `*`) that are invalid in MCP tool names. The server automatically sanitizes task names to conform to the [MCP tool name specification](https://modelcontextprotocol.io/specification/2025-11-25/server/tools) (`[a-zA-Z0-9_.-]`).
+Taskfile task names can contain characters such as `:`, `*`, spaces, `/`, and non-ASCII text that are not MCP-valid tool names. The server automatically sanitizes exported tool names to conform to the [MCP tool name specification](https://modelcontextprotocol.io/specification/2025-11-25/server/tools) (`[a-zA-Z0-9_.-]`, max length `128`).
 
 ### Naming Rules
 
@@ -70,8 +70,12 @@ Taskfile task names can contain characters (`:`, `*`) that are invalid in MCP to
 | Single wildcard | `start:*` | `start` |
 | Multiple wildcards | `deploy:*:*` | `deploy` |
 | Mixed namespace + wildcard | `uv:add:*` | `uv_add` |
+| Slash → underscore | `build/dev` | `build_dev` |
+| Space → underscore | `release prod` | `release_prod` |
+| Non-ASCII → underscore | `café` | `caf_` |
 
 When the tool name differs from the original task name, the original is included in the tool description for discoverability.
+If a sanitized tool name would exceed 128 characters, it is truncated and given a deterministic hash suffix.
 If multiple tasks resolve to the same final MCP tool name after sanitization and optional root prefixing, all of those colliding tasks are excluded from MCP exposure.
 
 ### Multi-Root Prefixing
