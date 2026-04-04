@@ -502,24 +502,110 @@ func TestIsTaskfile(t *testing.T) {
 }
 
 func TestDirToURI(t *testing.T) {
-	uri := dirToURI("/some/path")
-	if uri != "file:///some/path" {
-		t.Errorf("dirToURI(%q) = %q, want %q", "/some/path", uri, "file:///some/path")
+	dir := filepath.Join(t.TempDir(), "path with #hash and ?query")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	uri := dirToURI(dir)
+	if strings.Contains(uri, "#") || strings.Contains(uri, "?") {
+		t.Fatalf("dirToURI(%q) returned unescaped URI %q", dir, uri)
+	}
+
+	roundTrip, err := uriToDir(uri)
+	if err != nil {
+		t.Fatalf("uriToDir(%q) failed: %v", uri, err)
+	}
+	if roundTrip != filepath.Clean(dir) {
+		t.Errorf("uri round-trip = %q, want %q", roundTrip, filepath.Clean(dir))
 	}
 }
 
 func TestURIToDir(t *testing.T) {
-	dir, err := uriToDir("file:///some/path")
-	if err != nil {
-		t.Fatalf("uriToDir failed: %v", err)
+	dir := filepath.Join(t.TempDir(), "path with #hash and ?query")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
 	}
-	if dir != "/some/path" {
-		t.Errorf("uriToDir = %q, want %q", dir, "/some/path")
+	want := filepath.Clean(dir)
+	uri := dirToURI(dir)
+	localhostURI := strings.Replace(uri, "file://", "file://localhost", 1)
+
+	tests := []struct {
+		name    string
+		uri     string
+		want    string
+		wantErr string
+	}{
+		{name: "local file URI", uri: uri, want: want},
+		{name: "localhost file URI", uri: localhostURI, want: want},
+		{name: "non-file URI", uri: "https://example.com", wantErr: `unsupported URI scheme "https"`},
+		{name: "fragment", uri: "file:///tmp/a#b", wantErr: "must not include query or fragment"},
+		{name: "query", uri: "file:///tmp/a?b", wantErr: "must not include query or fragment"},
+		{name: "unc", uri: "file://server/share", wantErr: "UNC file URI"},
+	}
+	if runtime.GOOS == "windows" {
+		tests = append(tests, struct {
+			name    string
+			uri     string
+			want    string
+			wantErr string
+		}{name: "windows drive URI", uri: "file:///C:/repo", want: filepath.Clean(`C:\repo`)})
+	} else {
+		tests = append(tests, struct {
+			name    string
+			uri     string
+			want    string
+			wantErr string
+		}{name: "windows drive URI", uri: "file:///C:/repo", wantErr: "windows file URI"})
 	}
 
-	_, err = uriToDir("https://example.com")
-	if err == nil {
-		t.Error("expected error for non-file URI")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := uriToDir(tt.uri)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("uriToDir(%q) = %q, want error containing %q", tt.uri, got, tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("uriToDir(%q) error = %q, want substring %q", tt.uri, err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("uriToDir(%q) failed: %v", tt.uri, err)
+			}
+			if got != tt.want {
+				t.Fatalf("uriToDir(%q) = %q, want %q", tt.uri, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTaskfileLocationToPath_FileURI(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "taskfile with #hash")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok, err := taskfileLocationToPath(dirToURI(dir))
+	if err != nil {
+		t.Fatalf("taskfileLocationToPath failed: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected file URI to be treated as local")
+	}
+	if got != filepath.Clean(dir) {
+		t.Fatalf("taskfileLocationToPath = %q, want %q", got, filepath.Clean(dir))
+	}
+}
+
+func TestTaskfileLocationToPath_IgnoresNonLocalURI(t *testing.T) {
+	got, ok, err := taskfileLocationToPath("https://example.com/Taskfile.yml")
+	if err != nil {
+		t.Fatalf("taskfileLocationToPath returned error: %v", err)
+	}
+	if ok {
+		t.Fatalf("expected non-file URI to be ignored, got %q", got)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -90,19 +91,51 @@ func dirToURI(dir string) string {
 	if err != nil {
 		abs = dir
 	}
-	return "file://" + filepath.ToSlash(abs)
+	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}).String()
 }
 
 // uriToDir converts a file:// URI back to a local directory path.
 func uriToDir(uri string) (string, error) {
-	u, err := url.Parse(uri)
+	return fileURIToPath(uri)
+}
+
+// fileURIToPath parses a local file:// URI into a filesystem path.
+func fileURIToPath(raw string) (string, error) {
+	u, err := url.Parse(raw)
 	if err != nil {
-		return "", fmt.Errorf("invalid URI %q: %w", uri, err)
+		return "", fmt.Errorf("invalid URI %q: %w", raw, err)
 	}
 	if u.Scheme != "file" {
 		return "", fmt.Errorf("unsupported URI scheme %q (only file:// is supported)", u.Scheme)
 	}
-	return filepath.FromSlash(u.Path), nil
+	if u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("file URI %q must not include query or fragment", raw)
+	}
+	if u.Host != "" && !strings.EqualFold(u.Host, "localhost") {
+		return "", fmt.Errorf("UNC file URI %q is not supported", raw)
+	}
+
+	path := u.Path
+	if path == "" {
+		return "", fmt.Errorf("file URI %q is missing a path", raw)
+	}
+	if isWindowsDriveURIPath(path) {
+		if runtime.GOOS != "windows" {
+			return "", fmt.Errorf("windows file URI %q is not supported on %s", raw, runtime.GOOS)
+		}
+		path = strings.TrimPrefix(path, "/")
+	}
+
+	return filepath.Clean(filepath.FromSlash(path)), nil
+}
+
+func isWindowsDriveURIPath(path string) bool {
+	if len(path) < 3 || path[0] != '/' || path[2] != ':' {
+		return false
+	}
+
+	drive := path[1]
+	return (drive >= 'a' && drive <= 'z') || (drive >= 'A' && drive <= 'Z')
 }
 
 // validRootPrefixChars matches characters NOT allowed in a root prefix.
@@ -206,7 +239,12 @@ func taskfileLocationToPath(location string) (string, bool, error) {
 		return "", false, nil
 	}
 
-	return filepath.Clean(filepath.FromSlash(u.Path)), true, nil
+	path, err := fileURIToPath(location)
+	if err != nil {
+		return "", false, err
+	}
+
+	return path, true, nil
 }
 
 // sortedKeys returns the sorted keys of a string set.
