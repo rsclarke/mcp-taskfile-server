@@ -72,6 +72,7 @@ Taskfile task names can contain characters (`:`, `*`) that are invalid in MCP to
 | Mixed namespace + wildcard | `uv:add:*` | `uv_add` |
 
 When the tool name differs from the original task name, the original is included in the tool description for discoverability.
+If multiple tasks resolve to the same final MCP tool name after sanitization and optional root prefixing, all of those colliding tasks are excluded from MCP exposure.
 
 ### Multi-Root Prefixing
 

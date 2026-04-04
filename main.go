@@ -495,9 +495,17 @@ func createToolForTask(root *rootState, prefix, taskName string, taskDef *ast.Ta
 // buildToolSet discovers all tasks across all roots and returns tool definitions
 // and handlers without registering them on a server. It also populates each
 // root's registeredTools list.
-func (s *TaskfileServer) buildToolSet() (map[string]mcp.Tool, map[string]mcp.ToolHandler, error) {
+func (s *TaskfileServer) buildToolSet() (map[string]mcp.Tool, map[string]mcp.ToolHandler) {
+	type toolCandidate struct {
+		root     *rootState
+		taskName string
+		tool     mcp.Tool
+		handler  mcp.ToolHandler
+	}
+
 	tools := make(map[string]mcp.Tool)
 	handlers := make(map[string]mcp.ToolHandler)
+	candidates := make(map[string][]toolCandidate)
 
 	for _, root := range s.roots {
 		root.registeredTools = nil
@@ -516,16 +524,40 @@ func (s *TaskfileServer) buildToolSet() (map[string]mcp.Tool, map[string]mcp.Too
 			}
 
 			tool := createToolForTask(root, prefix, taskName, taskDef)
-			if _, exists := tools[tool.Name]; exists {
-				return nil, nil, fmt.Errorf("tool name collision: %q", tool.Name)
-			}
-			tools[tool.Name] = *tool
-			handlers[tool.Name] = createTaskHandler(root, taskName)
-			root.registeredTools = append(root.registeredTools, tool.Name)
+			candidates[tool.Name] = append(candidates[tool.Name], toolCandidate{
+				root:     root,
+				taskName: taskName,
+				tool:     *tool,
+				handler:  createTaskHandler(root, taskName),
+			})
 		}
 	}
 
-	return tools, handlers, nil
+	names := make([]string, 0, len(candidates))
+	for name := range candidates {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+
+	for _, name := range names {
+		group := candidates[name]
+		if len(group) > 1 {
+			details := make([]string, 0, len(group))
+			for _, candidate := range group {
+				details = append(details, fmt.Sprintf("%s (%s)", candidate.taskName, candidate.root.workdir))
+			}
+			slices.Sort(details)
+			log.Printf("excluding colliding tool name %q from MCP exposure: %s", name, strings.Join(details, ", "))
+			continue
+		}
+
+		candidate := group[0]
+		tools[name] = candidate.tool
+		handlers[name] = candidate.handler
+		candidate.root.registeredTools = append(candidate.root.registeredTools, name)
+	}
+
+	return tools, handlers
 }
 
 // toolsEqual reports whether two tool definitions are equivalent
@@ -548,10 +580,7 @@ func toolsEqual(a, b *mcp.Tool) bool {
 // syncTools builds the current tool set, diffs it against previously
 // registered tools, and adds/removes tools on the MCP server as needed.
 func (s *TaskfileServer) syncTools() error {
-	tools, handlers, err := s.buildToolSet()
-	if err != nil {
-		return err
-	}
+	tools, handlers := s.buildToolSet()
 
 	// Remove tools that no longer exist or have changed
 	var stale []string

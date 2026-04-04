@@ -180,10 +180,7 @@ func TestCreateToolForTask_OverrideVars(t *testing.T) {
 func TestBuildToolSet_SkipsInternal(t *testing.T) {
 	s := loadServerFromFixture(t, "internal")
 
-	tools, _, err := s.buildToolSet()
-	if err != nil {
-		t.Fatalf("buildToolSet failed: %v", err)
-	}
+	tools, _ := s.buildToolSet()
 
 	if len(tools) != 1 {
 		t.Fatalf("expected 1 tool, got %d", len(tools))
@@ -335,10 +332,7 @@ func TestCreateToolForTask_LeadingDot(t *testing.T) {
 func TestBuildToolSet_Namespaced(t *testing.T) {
 	s := loadServerFromFixture(t, "namespaced")
 
-	tools, _, err := s.buildToolSet()
-	if err != nil {
-		t.Fatalf("buildToolSet failed: %v", err)
-	}
+	tools, _ := s.buildToolSet()
 
 	for _, want := range []string{"db_migrate", "uv_run", "uv_run_dev_lint-imports"} {
 		if _, ok := tools[want]; !ok {
@@ -350,10 +344,7 @@ func TestBuildToolSet_Namespaced(t *testing.T) {
 func TestBuildToolSet_Includes(t *testing.T) {
 	s := loadServerFromFixture(t, "includes")
 
-	tools, _, err := s.buildToolSet()
-	if err != nil {
-		t.Fatalf("buildToolSet failed: %v", err)
-	}
+	tools, _ := s.buildToolSet()
 
 	for _, want := range []string{"build", "docs_serve", "docs_build"} {
 		if _, ok := tools[want]; !ok {
@@ -365,10 +356,7 @@ func TestBuildToolSet_Includes(t *testing.T) {
 func TestBuildToolSet_Wildcard(t *testing.T) {
 	s := loadServerFromFixture(t, "wildcard")
 
-	tools, _, err := s.buildToolSet()
-	if err != nil {
-		t.Fatalf("buildToolSet failed: %v", err)
-	}
+	tools, _ := s.buildToolSet()
 
 	for _, want := range []string{"start", "deploy"} {
 		if _, ok := tools[want]; !ok {
@@ -1697,10 +1685,10 @@ func TestCreateTaskHandler_InvalidArguments(t *testing.T) {
 	}
 }
 
-func TestBuildToolSet_Collision(t *testing.T) {
+func TestBuildToolSet_ExcludesCollidingToolNamesAcrossRoots(t *testing.T) {
 	// Create two dirs with the same basename ("dup") containing identically
 	// named tasks. With >1 root the prefix is derived from the basename,
-	// so both roots produce the same prefixed tool name → collision.
+	// so both roots produce the same prefixed tool name and neither should be exposed.
 	dir1 := filepath.Join(t.TempDir(), "dup")
 	dir2 := filepath.Join(t.TempDir(), "dup")
 	if err := os.Mkdir(dir1, 0o750); err != nil {
@@ -1710,11 +1698,12 @@ func TestBuildToolSet_Collision(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	taskfile := []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n")
-	if err := os.WriteFile(filepath.Join(dir1, "Taskfile.yml"), taskfile, 0o600); err != nil {
+	taskfile1 := []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n  frontend:\n    desc: Frontend task\n    cmds:\n      - echo frontend\n")
+	taskfile2 := []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n  backend:\n    desc: Backend task\n    cmds:\n      - echo backend\n")
+	if err := os.WriteFile(filepath.Join(dir1, "Taskfile.yml"), taskfile1, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir2, "Taskfile.yml"), taskfile, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir2, "Taskfile.yml"), taskfile2, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1734,12 +1723,55 @@ func TestBuildToolSet_Collision(t *testing.T) {
 		},
 	}
 
-	_, _, err = s.buildToolSet()
-	if err == nil {
-		t.Fatal("expected collision error, got nil")
+	tools, handlers := s.buildToolSet()
+
+	if _, ok := tools["dup_hello"]; ok {
+		t.Fatalf("expected colliding tool dup_hello to be excluded, got %v", toolNames(tools))
 	}
-	if !strings.Contains(err.Error(), "collision") {
-		t.Errorf("expected collision error, got: %v", err)
+	if _, ok := handlers["dup_hello"]; ok {
+		t.Fatal("expected colliding handler dup_hello to be excluded")
+	}
+
+	want := []string{"dup_backend", "dup_frontend"}
+	if got := toolNames(tools); !slices.Equal(got, want) {
+		t.Fatalf("toolNames = %v, want %v", got, want)
+	}
+	if !slices.Equal(r1.registeredTools, []string{"dup_frontend"}) {
+		t.Fatalf("r1.registeredTools = %v, want [dup_frontend]", r1.registeredTools)
+	}
+	if !slices.Equal(r2.registeredTools, []string{"dup_backend"}) {
+		t.Fatalf("r2.registeredTools = %v, want [dup_backend]", r2.registeredTools)
+	}
+}
+
+func TestBuildToolSet_ExcludesCollidingToolNamesWithinRoot(t *testing.T) {
+	dir := t.TempDir()
+	taskfile := []byte("version: '3'\ntasks:\n  build:dev:\n    desc: Build namespaced\n    cmds:\n      - echo namespaced\n  build_dev:\n    desc: Build underscored\n    cmds:\n      - echo underscored\n  lint:\n    desc: Lint\n    cmds:\n      - echo lint\n")
+	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), taskfile, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	root, err := loadRoot(t.Context(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := &TaskfileServer{
+		roots: map[string]*rootState{dirToURI(dir): root},
+	}
+
+	tools, handlers := s.buildToolSet()
+	if _, ok := tools["build_dev"]; ok {
+		t.Fatalf("expected colliding tool build_dev to be excluded, got %v", toolNames(tools))
+	}
+	if _, ok := handlers["build_dev"]; ok {
+		t.Fatal("expected colliding handler build_dev to be excluded")
+	}
+	if got := toolNames(tools); !slices.Equal(got, []string{"lint"}) {
+		t.Fatalf("toolNames = %v, want [lint]", got)
+	}
+	if !slices.Equal(root.registeredTools, []string{"lint"}) {
+		t.Fatalf("root.registeredTools = %v, want [lint]", root.registeredTools)
 	}
 }
 
@@ -1758,10 +1790,7 @@ func TestBuildToolSet_NoTasks(t *testing.T) {
 		roots: map[string]*rootState{dirToURI(dir): root},
 	}
 
-	tools, handlers, err := s.buildToolSet()
-	if err != nil {
-		t.Fatalf("buildToolSet failed: %v", err)
-	}
+	tools, handlers := s.buildToolSet()
 	if len(tools) != 0 {
 		t.Fatalf("expected no tools, got %v", toolNames(tools))
 	}
