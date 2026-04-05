@@ -1686,6 +1686,82 @@ func TestCreateTaskHandler_WildcardWrongCount(t *testing.T) {
 	}
 }
 
+func TestCreateTaskHandler_WildcardMultiMATCH(t *testing.T) {
+	s := loadServerFromFixture(t, "wildcard")
+	root := onlyRoot(t, s)
+
+	handler := createTaskHandler(root, "deploy:*:*")
+	args := json.RawMessage(`{"MATCH":" api , production "}`)
+	result, err := handler(t.Context(), &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{
+			Name:      "deploy",
+			Arguments: args,
+		},
+	})
+	if err != nil {
+		t.Fatalf("handler returned error: %v", err)
+	}
+	if result.IsError {
+		text := result.Content[0].(*mcp.TextContent).Text
+		t.Fatalf("expected success, got IsError=true: %s", text)
+	}
+
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "api") || !strings.Contains(text, "production") {
+		t.Errorf("expected output to contain trimmed wildcard values, got %q", text)
+	}
+}
+
+func TestCreateTaskHandler_WildcardTooManyValues(t *testing.T) {
+	s := loadServerFromFixture(t, "wildcard")
+	root := onlyRoot(t, s)
+
+	handler := createTaskHandler(root, "deploy:*:*")
+	args := json.RawMessage(`{"MATCH":"api,production,extra"}`)
+	result, err := handler(t.Context(), &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{
+			Name:      "deploy",
+			Arguments: args,
+		},
+	})
+	if err != nil {
+		t.Fatalf("handler returned error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected IsError=true for too many MATCH values")
+	}
+
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "exactly 2 comma-separated") || !strings.Contains(text, "got 3") {
+		t.Errorf("expected error about too many comma-separated values, got %q", text)
+	}
+}
+
+func TestCreateTaskHandler_WildcardEmptySegment(t *testing.T) {
+	s := loadServerFromFixture(t, "wildcard")
+	root := onlyRoot(t, s)
+
+	handler := createTaskHandler(root, "deploy:*:*")
+	args := json.RawMessage(`{"MATCH":"api, "}`)
+	result, err := handler(t.Context(), &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{
+			Name:      "deploy",
+			Arguments: args,
+		},
+	})
+	if err != nil {
+		t.Fatalf("handler returned error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected IsError=true for empty MATCH segment")
+	}
+
+	text := result.Content[0].(*mcp.TextContent).Text
+	if !strings.Contains(text, "cannot be empty") {
+		t.Errorf("expected error about empty MATCH segment, got %q", text)
+	}
+}
+
 func TestCreateTaskHandler_InvalidArguments(t *testing.T) {
 	s := loadServerFromFixture(t, "basic")
 	root := onlyRoot(t, s)

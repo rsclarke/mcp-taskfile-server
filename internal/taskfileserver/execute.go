@@ -44,16 +44,27 @@ func createTaskHandlerForWorkdir(workdir, taskName string) mcp.ToolHandler {
 					IsError: true,
 				}, nil
 			}
-			parts := strings.SplitN(matchVal, ",", wildcardCount)
+			parts := strings.Split(matchVal, ",")
 			if len(parts) != wildcardCount {
 				return &mcp.CallToolResult{
-					Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("MATCH requires %d comma-separated value(s), got %d", wildcardCount, len(parts))}},
+					Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("MATCH requires exactly %d comma-separated value(s), got %d", wildcardCount, len(parts))}},
 					IsError: true,
 				}, nil
 			}
+			trimmedParts := make([]string, 0, len(parts))
+			for i, p := range parts {
+				trimmed := strings.TrimSpace(p)
+				if trimmed == "" {
+					return &mcp.CallToolResult{
+						Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("MATCH value %d cannot be empty", i+1)}},
+						IsError: true,
+					}, nil
+				}
+				trimmedParts = append(trimmedParts, trimmed)
+			}
 			resolvedName = taskName
-			for _, p := range parts {
-				resolvedName = strings.Replace(resolvedName, "*", strings.TrimSpace(p), 1)
+			for _, p := range trimmedParts {
+				resolvedName = strings.Replace(resolvedName, "*", p, 1)
 			}
 			delete(arguments, "MATCH")
 		}

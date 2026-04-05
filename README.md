@@ -102,7 +102,7 @@ For a task defined as `start:*`, calling the tool:
 
 executes `task start:web`.
 
-For tasks with multiple wildcards (e.g. `deploy:*:*`), provide comma-separated values:
+For tasks with multiple wildcards (e.g. `deploy:*:*`), provide exactly one comma-separated value per wildcard segment. Surrounding whitespace is trimmed, but empty segments are rejected:
 
 ```json
 {"name": "deploy", "arguments": {"MATCH": "api,production"}}
