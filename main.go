@@ -46,7 +46,7 @@ func run() error {
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Printf("Server error: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
 		os.Exit(1)
 	}
 }
