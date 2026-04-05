@@ -61,11 +61,24 @@ func (s *Server) loadRootsFromSession(ctx context.Context, session *mcp.ServerSe
 		return nil
 	}
 
+	s.mu.Lock()
+	existing := make(map[string]struct{}, len(s.roots))
+	for uri := range s.roots {
+		existing[uri] = struct{}{}
+	}
+	s.mu.Unlock()
+
 	loadedRoots := make(map[string]*Root, len(rootRes.Roots))
 	for _, r := range rootRes.Roots {
-		dir, parseErr := uriToDir(r.URI)
+		canonicalURI, dir, parseErr := canonicalRootURI(r.URI)
 		if parseErr != nil {
 			log.Printf("skipping root with invalid URI %q: %v", r.URI, parseErr)
+			continue
+		}
+		if _, exists := existing[canonicalURI]; exists {
+			continue
+		}
+		if _, exists := loadedRoots[canonicalURI]; exists {
 			continue
 		}
 		root, loadErr := loadRoot(ctx, dir)
@@ -73,7 +86,7 @@ func (s *Server) loadRootsFromSession(ctx context.Context, session *mcp.ServerSe
 			log.Printf("failed to load root %q: %v", r.URI, loadErr)
 			continue
 		}
-		loadedRoots[r.URI] = root
+		loadedRoots[canonicalURI] = root
 	}
 
 	s.mu.Lock()
@@ -112,11 +125,8 @@ func (s *Server) HandleRootsChanged(ctx context.Context, req *mcp.RootsListChang
 		return
 	}
 
-	// Build a set of new URIs.
+	// Build a set of new canonical root identities.
 	newURIs := make(map[string]struct{}, len(rootRes.Roots))
-	for _, r := range rootRes.Roots {
-		newURIs[r.URI] = struct{}{}
-	}
 
 	s.mu.Lock()
 	existing := make(map[string]struct{}, len(s.roots))
@@ -127,12 +137,16 @@ func (s *Server) HandleRootsChanged(ctx context.Context, req *mcp.RootsListChang
 
 	loadedRoots := make(map[string]*Root)
 	for _, r := range rootRes.Roots {
-		if _, exists := existing[r.URI]; exists {
-			continue
-		}
-		dir, parseErr := uriToDir(r.URI)
+		canonicalURI, dir, parseErr := canonicalRootURI(r.URI)
 		if parseErr != nil {
 			log.Printf("skipping root with invalid URI %q: %v", r.URI, parseErr)
+			continue
+		}
+		newURIs[canonicalURI] = struct{}{}
+		if _, exists := existing[canonicalURI]; exists {
+			continue
+		}
+		if _, exists := loadedRoots[canonicalURI]; exists {
 			continue
 		}
 		root, loadErr := loadRoot(ctx, dir)
@@ -140,7 +154,7 @@ func (s *Server) HandleRootsChanged(ctx context.Context, req *mcp.RootsListChang
 			log.Printf("failed to load root %q: %v", r.URI, loadErr)
 			continue
 		}
-		loadedRoots[r.URI] = root
+		loadedRoots[canonicalURI] = root
 	}
 
 	s.mu.Lock()

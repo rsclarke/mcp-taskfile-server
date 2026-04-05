@@ -28,8 +28,8 @@ type Server struct {
 	shuttingDown    bool
 }
 
-// rootSnapshot is a root URI captured under lock for use by watchTaskfiles
-// without holding the mutex.
+// rootSnapshot is a canonical root URI captured under lock for use by
+// watchTaskfiles without holding the mutex.
 type rootSnapshot struct {
 	uri string
 }

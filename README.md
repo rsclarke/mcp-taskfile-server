@@ -44,6 +44,8 @@ mcp-taskfile-server
 
 After the client handshake completes, the server calls `roots/list` to discover which directories to load Taskfiles from. Clients that support the MCP [Roots](https://modelcontextprotocol.io/specification/2025-11-25/client/roots) capability can provide one or more `file://` root URIs. If the client does not support roots (returns JSON-RPC `-32601`), the server falls back to the current working directory.
 
+Equivalent local file URI aliases are canonicalized before they enter server state, so values such as `file:///repo` and `file://localhost/repo` share a single internal root identity.
+
 When roots change at runtime (`notifications/roots/list_changed`), the server automatically diffs the root set, tears down removed roots (stopping their file watchers and unregistering their tools), and loads any newly added roots.
 
 ### Dynamic Tool Discovery

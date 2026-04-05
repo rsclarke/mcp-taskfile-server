@@ -595,6 +595,40 @@ func TestURIToDir(t *testing.T) {
 	}
 }
 
+func TestCanonicalRootURI(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "path with #hash and ?query")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	wantURI := dirToURI(dir)
+	wantDir := filepath.Clean(dir)
+	aliasURI := strings.Replace(wantURI, "file://", "file://localhost", 1)
+
+	tests := []struct {
+		name string
+		uri  string
+	}{
+		{name: "canonical file URI", uri: wantURI},
+		{name: "localhost alias", uri: aliasURI},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotURI, gotDir, err := canonicalRootURI(tt.uri)
+			if err != nil {
+				t.Fatalf("canonicalRootURI(%q) failed: %v", tt.uri, err)
+			}
+			if gotURI != wantURI {
+				t.Fatalf("canonicalRootURI(%q) URI = %q, want %q", tt.uri, gotURI, wantURI)
+			}
+			if gotDir != wantDir {
+				t.Fatalf("canonicalRootURI(%q) dir = %q, want %q", tt.uri, gotDir, wantDir)
+			}
+		})
+	}
+}
+
 func TestTaskfileLocationToPath_FileURI(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "taskfile with #hash")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
@@ -1431,6 +1465,65 @@ done:
 	ts.mu.Unlock()
 }
 
+func TestHandleInitialized_DeduplicatesEquivalentRootURIs(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ts := New()
+	ctx := t.Context()
+
+	rootURI := dirToURI(dir)
+	aliasURI := strings.Replace(rootURI, "file://", "file://localhost", 1)
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
+	client.AddRoots(
+		&mcp.Root{URI: rootURI, Name: "canonical"},
+		&mcp.Root{URI: aliasURI, Name: "alias"},
+	)
+
+	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, &mcp.ServerOptions{
+		InitializedHandler:      ts.HandleInitialized,
+		RootsListChangedHandler: ts.HandleRootsChanged,
+	})
+	ts.mcpServer = server
+	ts.registeredTools = make(map[string]mcp.Tool)
+
+	ct, st := mcp.NewInMemoryTransports()
+	ss, err := server.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ss.Close() })
+
+	cs, err := client.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+
+	waitForRootCount(t, ts, 1)
+	waitForToolCount(t, ts, 1)
+
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	if len(ts.roots) != 1 {
+		t.Fatalf("expected 1 canonical root, got %d", len(ts.roots))
+	}
+	if _, ok := ts.roots[rootURI]; !ok {
+		t.Fatalf("expected canonical root %q", rootURI)
+	}
+	if _, ok := ts.roots[aliasURI]; ok {
+		t.Fatalf("did not expect alias root %q to be stored separately", aliasURI)
+	}
+	if _, ok := ts.registeredTools["hello"]; !ok {
+		t.Fatalf("expected unprefixed tool 'hello', got %v", toolNames(ts.registeredTools))
+	}
+	if len(ts.registeredTools) != 1 {
+		t.Fatalf("expected exactly 1 tool after deduping aliases, got %d", len(ts.registeredTools))
+	}
+}
+
 func TestHandleRootsChanged_AddAndRemove(t *testing.T) {
 	dir1 := t.TempDir()
 	dir2 := t.TempDir()
@@ -1499,6 +1592,84 @@ func TestHandleRootsChanged_AddAndRemove(t *testing.T) {
 		t.Errorf("expected root %q to remain", uri2)
 	}
 	ts.mu.Unlock()
+}
+
+func TestHandleRootsChanged_EquivalentURIAliasKeepsSingleRoot(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ts := New()
+	ctx := t.Context()
+
+	rootURI := dirToURI(dir)
+	aliasURI := strings.Replace(rootURI, "file://", "file://localhost", 1)
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
+	client.AddRoots(&mcp.Root{URI: rootURI, Name: "canonical"})
+
+	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, &mcp.ServerOptions{
+		InitializedHandler:      ts.HandleInitialized,
+		RootsListChangedHandler: ts.HandleRootsChanged,
+	})
+	ts.mcpServer = server
+	ts.registeredTools = make(map[string]mcp.Tool)
+
+	ct, st := mcp.NewInMemoryTransports()
+	ss, err := server.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ss.Close() })
+
+	cs, err := client.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+
+	assertCanonicalSingleRoot := func() {
+		t.Helper()
+		ts.mu.Lock()
+		defer ts.mu.Unlock()
+		if len(ts.roots) != 1 {
+			t.Fatalf("expected 1 canonical root, got %d", len(ts.roots))
+		}
+		if _, ok := ts.roots[rootURI]; !ok {
+			t.Fatalf("expected canonical root %q", rootURI)
+		}
+		if _, ok := ts.roots[aliasURI]; ok {
+			t.Fatalf("did not expect alias root %q to be stored separately", aliasURI)
+		}
+		if _, ok := ts.registeredTools["hello"]; !ok {
+			t.Fatalf("expected unprefixed tool 'hello', got %v", toolNames(ts.registeredTools))
+		}
+		if len(ts.registeredTools) != 1 {
+			t.Fatalf("expected exactly 1 tool, got %d", len(ts.registeredTools))
+		}
+	}
+
+	waitForRootCount(t, ts, 1)
+	waitForToolCount(t, ts, 1)
+	assertCanonicalSingleRoot()
+
+	client.AddRoots(&mcp.Root{URI: aliasURI, Name: "alias"})
+
+	waitForRootCount(t, ts, 1)
+	waitForToolCount(t, ts, 1)
+	assertCanonicalSingleRoot()
+
+	client.RemoveRoots(rootURI)
+
+	waitForRootCount(t, ts, 1)
+	waitForToolCount(t, ts, 1)
+	assertCanonicalSingleRoot()
+
+	client.RemoveRoots(aliasURI)
+
+	waitForRootCount(t, ts, 0)
+	waitForToolCount(t, ts, 0)
 }
 
 // waitForTools waits until the server has at least minTools registered.

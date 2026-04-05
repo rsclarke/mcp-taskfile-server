@@ -26,6 +26,24 @@ func uriToDir(uri string) (string, error) {
 	return fileURIToPath(uri)
 }
 
+// canonicalRootURI resolves a client-provided local file URI to the canonical
+// absolute file URI we use as the server's internal root identity. Equivalent
+// aliases such as file:///repo and file://localhost/repo collapse to the same
+// canonical URI and directory.
+func canonicalRootURI(raw string) (string, string, error) {
+	dir, err := uriToDir(raw)
+	if err != nil {
+		return "", "", err
+	}
+
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to resolve path for %q: %w", raw, err)
+	}
+
+	return dirToURI(abs), abs, nil
+}
+
 // fileURIToPath parses a local file:// URI into a filesystem path.
 func fileURIToPath(raw string) (string, error) {
 	u, err := url.Parse(raw)
@@ -94,7 +112,7 @@ func loadRoot(ctx context.Context, dir string) (*Root, error) {
 	}, nil
 }
 
-// unloadRoot removes and cleans up the root with the given URI.
+// unloadRoot removes and cleans up the root with the given canonical URI.
 func (s *Server) unloadRoot(uri string) {
 	delete(s.roots, uri)
 }
@@ -107,8 +125,8 @@ func (s *Server) disableRootTools(root *Root) error {
 	return s.syncTools()
 }
 
-// reloadRoot re-creates the task executor for a given root URI and syncs
-// the global MCP tool set.
+// reloadRoot re-creates the task executor for a given canonical root URI and
+// syncs the global MCP tool set.
 func (s *Server) reloadRoot(ctx context.Context, uri string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
