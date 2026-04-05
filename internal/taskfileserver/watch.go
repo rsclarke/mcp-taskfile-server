@@ -148,12 +148,40 @@ func (s *Server) watchTaskfiles(ctx context.Context, roots []rootSnapshot) error
 	return firstErr
 }
 
+// Shutdown stops any detached watcher goroutines and waits for them to exit.
+// It is safe to call multiple times.
+func (s *Server) Shutdown() {
+	s.mu.Lock()
+	if s.shuttingDown {
+		s.mu.Unlock()
+		return
+	}
+
+	s.shuttingDown = true
+	cancel := s.watchCancel
+	done := s.watchDone
+	s.watchCancel = nil
+	s.watchDone = nil
+	s.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
+	}
+}
+
 // restartWatchers cancels any running file watchers, waits for them to exit,
 // then starts new ones for all current roots. The provided ctx is
 // intentionally detached via context.WithoutCancel because callers pass
 // request-scoped contexts that are cancelled after the handler returns.
 func (s *Server) restartWatchers(ctx context.Context) {
 	s.mu.Lock()
+	if s.shuttingDown {
+		s.mu.Unlock()
+		return
+	}
 
 	// Capture previous watcher generation's cancel and done channel.
 	prevCancel := s.watchCancel
@@ -168,7 +196,7 @@ func (s *Server) restartWatchers(ctx context.Context) {
 	// Prepare the new watcher generation before releasing the lock.
 	// Detach from the caller's request-scoped context which is cancelled
 	// after the handler returns; the watcher must outlive the request.
-	watchCtx, cancel := context.WithCancel(context.WithoutCancel(ctx)) //nolint:gosec // cancel is stored in s.watchCancel and called on next restart or shutdown
+	watchCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	done := make(chan struct{})
 	s.watchCancel = cancel
 	s.watchDone = done

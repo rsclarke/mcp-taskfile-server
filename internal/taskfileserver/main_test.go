@@ -1013,6 +1013,63 @@ func TestWatchTaskfiles_CancelStops(t *testing.T) {
 	}
 }
 
+func TestServerShutdown_StopsActiveWatchersAndIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  x:\n    cmds:\n      - echo x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s := newServerForDir(t, dir)
+	s.restartWatchers(context.Background())
+
+	s.mu.Lock()
+	watchDone := s.watchDone
+	s.mu.Unlock()
+	if watchDone == nil {
+		t.Fatal("expected active watcher generation")
+	}
+
+	s.Shutdown()
+
+	select {
+	case <-watchDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Shutdown did not wait for watcher generation to stop")
+	}
+
+	s.mu.Lock()
+	watchCancel := s.watchCancel
+	remainingDone := s.watchDone
+	shuttingDown := s.shuttingDown
+	s.mu.Unlock()
+	if watchCancel != nil || remainingDone != nil {
+		t.Fatal("expected watcher state to be cleared after Shutdown")
+	}
+	if !shuttingDown {
+		t.Fatal("expected server to reject watcher restarts after Shutdown")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		s.Shutdown()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second Shutdown call blocked")
+	}
+
+	s.restartWatchers(context.Background())
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.watchCancel != nil || s.watchDone != nil {
+		t.Fatal("restartWatchers should be a no-op after Shutdown")
+	}
+}
+
 // snapshotRoots returns a rootSnapshot slice for use with watchTaskfiles.
 func snapshotRoots(s *Server) []rootSnapshot {
 	snap := make([]rootSnapshot, 0, len(s.roots))

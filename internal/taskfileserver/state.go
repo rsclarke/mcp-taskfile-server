@@ -25,6 +25,7 @@ type Server struct {
 	mu              sync.Mutex
 	watchCancel     context.CancelFunc
 	watchDone       chan struct{}
+	shuttingDown    bool
 }
 
 // rootSnapshot is a root URI captured under lock for use by watchTaskfiles
