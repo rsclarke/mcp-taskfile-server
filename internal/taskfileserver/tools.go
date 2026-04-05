@@ -24,7 +24,7 @@ func createToolForTask(root *Root, prefix, taskName string, taskDef *ast.Task) *
 	if description == "" {
 		description = "Execute task: " + taskName
 	}
-	if sanitizeToolName(taskName) != taskName {
+	if toolName != taskName {
 		description += fmt.Sprintf(" (task: %s)", taskName)
 	}
 

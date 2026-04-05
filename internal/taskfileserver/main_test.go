@@ -2089,6 +2089,9 @@ func TestCreateToolForTask_WithPrefix(t *testing.T) {
 	if tool.Name != "myproject_greet" {
 		t.Errorf("Name = %q, want %q", tool.Name, "myproject_greet")
 	}
+	if tool.Description != "Say hello (task: greet)" {
+		t.Errorf("Description = %q, want %q", tool.Description, "Say hello (task: greet)")
+	}
 }
 
 func TestCreateToolForTask_WithPrefix_EnforcesMaxLength(t *testing.T) {
