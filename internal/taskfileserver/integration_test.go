@@ -80,6 +80,56 @@ done:
 	ts.mu.Unlock()
 }
 
+func TestHandleInitialized_CallToolExecutesSingleRootTool(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ts := New()
+	ctx := t.Context()
+
+	rootURI := dirToURI(dir)
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
+	client.AddRoots(&mcp.Root{URI: rootURI, Name: "test"})
+
+	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, &mcp.ServerOptions{
+		InitializedHandler:      ts.HandleInitialized,
+		RootsListChangedHandler: ts.HandleRootsChanged,
+	})
+	ts.mcpServer = server
+	ts.registeredTools = make(map[string]mcp.Tool)
+
+	ct, st := mcp.NewInMemoryTransports()
+	ss, err := server.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ss.Close() })
+
+	cs, err := client.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+
+	waitForRootCount(t, ts, 1)
+	waitForToolCount(t, ts, 1)
+
+	result, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "hello"})
+	if err != nil {
+		t.Fatalf("CallTool failed: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got IsError=true: %s", toolResultText(t, result))
+	}
+
+	text := toolResultText(t, result)
+	if !strings.Contains(text, "completed successfully") || !strings.Contains(text, "hello") {
+		t.Fatalf("expected successful hello output, got %q", text)
+	}
+}
+
 func TestHandleInitialized_DeduplicatesEquivalentRootURIs(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n"), 0o600); err != nil {
@@ -406,6 +456,75 @@ func TestHandleRootsChanged_TransitionToUnprefixed(t *testing.T) {
 	ts.mu.Lock()
 	if _, ok := ts.registeredTools["task2"]; !ok {
 		t.Errorf("expected unprefixed tool 'task2' after N->1 transition, got: %v", toolNames(ts.registeredTools))
+	}
+	ts.mu.Unlock()
+}
+
+func TestHandleRootsChanged_TransitionToUnprefixedCallTool(t *testing.T) {
+	dir1 := t.TempDir()
+	dir2 := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir1, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  task1:\n    desc: Task one\n    cmds:\n      - echo one\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir2, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  task2:\n    desc: Task two\n    cmds:\n      - echo two\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ts := New()
+	ctx := t.Context()
+
+	uri1 := dirToURI(dir1)
+	uri2 := dirToURI(dir2)
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
+	client.AddRoots(
+		&mcp.Root{URI: uri1, Name: "root1"},
+		&mcp.Root{URI: uri2, Name: "root2"},
+	)
+
+	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, &mcp.ServerOptions{
+		InitializedHandler:      ts.HandleInitialized,
+		RootsListChangedHandler: ts.HandleRootsChanged,
+	})
+	ts.mcpServer = server
+	ts.registeredTools = make(map[string]mcp.Tool)
+
+	ct, st := mcp.NewInMemoryTransports()
+	ss, err := server.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ss.Close() })
+
+	cs, err := client.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+
+	waitForTools(t, ts, 2)
+
+	client.RemoveRoots(uri1)
+
+	waitForToolCount(t, ts, 1)
+
+	result, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: "task2"})
+	if err != nil {
+		t.Fatalf("CallTool failed after transition to a single root: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got IsError=true: %s", toolResultText(t, result))
+	}
+
+	text := toolResultText(t, result)
+	if !strings.Contains(text, "completed successfully") || !strings.Contains(text, "two") {
+		t.Fatalf("expected successful task2 output, got %q", text)
+	}
+
+	ts.mu.Lock()
+	if _, ok := ts.roots[uri2]; !ok {
+		ts.mu.Unlock()
+		t.Fatalf("expected root %q to remain", uri2)
 	}
 	ts.mu.Unlock()
 }
