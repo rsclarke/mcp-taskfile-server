@@ -156,12 +156,12 @@ This server executes arbitrary commands defined in your Taskfile. Only use it in
 To modify or extend the server:
 
 1. **Server Setup**: The MCP server is created using `mcp.NewServer()` with `InitializedHandler` and `RootsListChangedHandler`
-2. **Root Loading**: `HandleInitialized()` calls `ListRoots` to discover directories; `HandleRootsChanged()` diffs and updates the root set
-3. **Dynamic Discovery**: `buildToolPlan()` computes the desired tool state; `syncTools()` applies it to MCP registration
-4. **Tool Generation**: Each task becomes an MCP tool via `createToolForTask()`
-5. **Variable Extraction**: Task variables are automatically extracted for schema generation
-6. **Handler Creation**: During tool planning, each task gets a per-call handler via `createTaskHandlerForWorkdir()`
-7. **Tool Sync**: `syncTools()` diffs and updates registered tools; `watchTaskfiles()` triggers reloads from the graph-derived Taskfile watch set
+2. **Root Loading**: `HandleInitialized()` calls `ListRoots` to discover directories; `HandleRootsChanged()` diffs and updates the root set via `reconcileRoots()`
+3. **Snapshot/Plan/Apply**: `syncTools()` follows a three-phase pattern — snapshot state under lock, build a tool plan without the lock, then re-acquire the lock to validate the generation and apply changes
+4. **Generation Guard**: Each state mutation increments a generation counter; if another mutator runs concurrently, the stale plan is discarded without touching the MCP server
+5. **Tool Generation**: Each task becomes an MCP tool via `createToolForTask()`
+6. **Variable Extraction**: Task variables are automatically extracted for schema generation
+7. **Handler Creation**: During tool planning, each task gets a per-call handler via `createTaskHandlerForWorkdir()`
 8. **Native Execution**: Tasks are executed using `executor.Run()` from go-task library
 
 ### Key Components
@@ -169,12 +169,15 @@ To modify or extend the server:
 - **`New()`**: Creates an empty server; roots are loaded after the client handshake
 - **`HandleInitialized()`**: Requests roots from the client, loads each root's Taskfile, syncs tools, and starts file watchers
 - **`HandleRootsChanged()`**: Diffs the current root set against the client's updated list, adding/removing roots and re-syncing tools
+- **`reconcileRoots()`**: Canonicalizes incoming roots, loads new ones, removes stale ones, bumps the generation, syncs tools, and restarts watchers
 - **`loadRoot()` / `unloadRoot()`**: Loads or removes per-root Taskfile data and watch-set state
 - **`loadTaskfileWatchSet()`**: Resolves the local Taskfile graph and derives the Taskfiles and parent directories to watch
-- **`buildToolPlan()`**: Computes the desired MCP tool set and handlers without mutating the server
+- **`snapshotToolStateLocked()`**: Captures the current root map and generation under lock for use by `buildToolPlan()`
+- **`buildToolPlan()`**: Computes the desired MCP tool set and handlers from a snapshot without mutating the server
 - **`createToolForTask()`**: Generates MCP tool schema from task definition
 - **`createTaskHandlerForWorkdir()`**: Creates per-call execution handlers bound to a root workdir
-- **`syncTools()`**: Diffs current tasks against registered tools and adds/removes as needed
+- **`diffTools()`**: Compares old registered tools against desired tools and returns stale/added lists
+- **`syncTools()`**: Orchestrates the snapshot/plan/apply cycle with generation validation to safely update registered tools
 - **`watchTaskfiles()`**: Watches the graph-derived Taskfile set for changes with debounced reload
 
 ### Key Dependencies
