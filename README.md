@@ -157,7 +157,7 @@ To modify or extend the server:
 
 1. **Server Setup**: The MCP server is created using `mcp.NewServer()` with `InitializedHandler` and `RootsListChangedHandler`
 2. **Root Loading**: `HandleInitialized()` calls `ListRoots` to discover directories; `HandleRootsChanged()` diffs and updates the root set
-3. **Dynamic Discovery**: `buildToolPlan()` computes the desired tool state; `syncTools()` applies it to MCP registration and per-root bookkeeping
+3. **Dynamic Discovery**: `buildToolPlan()` computes the desired tool state; `syncTools()` applies it to MCP registration
 4. **Tool Generation**: Each task becomes an MCP tool via `createToolForTask()`
 5. **Variable Extraction**: Task variables are automatically extracted for schema generation
 6. **Handler Creation**: During tool planning, each task gets a per-call handler via `createTaskHandlerForWorkdir()`
@@ -171,7 +171,7 @@ To modify or extend the server:
 - **`HandleRootsChanged()`**: Diffs the current root set against the client's updated list, adding/removing roots and re-syncing tools
 - **`loadRoot()` / `unloadRoot()`**: Loads or removes per-root Taskfile data and watch-set state
 - **`loadTaskfileWatchSet()`**: Resolves the local Taskfile graph and derives the Taskfiles and parent directories to watch
-- **`buildToolPlan()`**: Computes the desired MCP tool set, handlers, and per-root registration state without mutating the server
+- **`buildToolPlan()`**: Computes the desired MCP tool set and handlers without mutating the server
 - **`createToolForTask()`**: Generates MCP tool schema from task definition
 - **`createTaskHandlerForWorkdir()`**: Creates per-call execution handlers bound to a root workdir
 - **`syncTools()`**: Diffs current tasks against registered tools and adds/removes as needed

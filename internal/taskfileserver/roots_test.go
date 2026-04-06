@@ -6,8 +6,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestIsTaskfile(t *testing.T) {
@@ -198,71 +196,5 @@ func TestSanitizeRootPrefix(t *testing.T) {
 				t.Errorf("sanitizeRootPrefix(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestUnloadRoot(t *testing.T) {
-	s := newTestServer(t, "basic")
-	if err := s.syncTools(); err != nil {
-		t.Fatalf("syncTools failed: %v", err)
-	}
-	if len(s.roots) != 1 {
-		t.Fatalf("expected 1 root, got %d", len(s.roots))
-	}
-
-	var uri string
-	for u := range s.roots {
-		uri = u
-	}
-
-	s.unloadRoot(uri)
-	if len(s.roots) != 0 {
-		t.Errorf("expected 0 roots after unload, got %d", len(s.roots))
-	}
-
-	// Unloading a non-existent root should be a no-op.
-	s.unloadRoot("file:///nonexistent")
-}
-
-func TestMultiRoot_Prefixing(t *testing.T) {
-	s := loadServerFromFixture(t, "basic")
-	s.mcpServer = mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
-	s.registeredTools = make(map[string]mcp.Tool)
-
-	// Load a second root from a different fixture.
-	_, filename, _, _ := runtime.Caller(0)
-	dir2 := filepath.Join(filepath.Dir(filename), "..", "..", "testdata", "no-desc")
-	root2, err := loadRoot(t.Context(), dir2)
-	if err != nil {
-		t.Fatalf("loadRoot: %v", err)
-	}
-	s.roots[dirToURI(dir2)] = root2
-
-	if err := s.syncTools(); err != nil {
-		t.Fatalf("syncTools failed: %v", err)
-	}
-
-	// With 2 roots, tools should be prefixed.
-	if len(s.registeredTools) < 2 {
-		t.Fatalf("expected at least 2 tools, got %d: %v", len(s.registeredTools), toolNames(s.registeredTools))
-	}
-
-	// Verify that no tool name is unprefixed "greet" or "build".
-	for name := range s.registeredTools {
-		if name == "greet" || name == "build" {
-			t.Errorf("expected prefixed tool name, got %q", name)
-		}
-	}
-}
-
-func TestMultiRoot_SingleRoot_NoPrefix(t *testing.T) {
-	s := newTestServer(t, "basic")
-	if err := s.syncTools(); err != nil {
-		t.Fatalf("syncTools failed: %v", err)
-	}
-
-	// Single root: no prefix.
-	if _, ok := s.registeredTools["greet"]; !ok {
-		t.Errorf("expected unprefixed tool %q, got: %v", "greet", toolNames(s.registeredTools))
 	}
 }

@@ -147,9 +147,6 @@ func TestSyncTools_NoPublicTasks(t *testing.T) {
 	if len(s.registeredTools) != 0 {
 		t.Fatalf("expected no registered tools, got %v", toolNames(s.registeredTools))
 	}
-	if len(onlyRoot(t, s).registeredTools) != 0 {
-		t.Fatalf("expected root registeredTools to be empty, got %v", onlyRoot(t, s).registeredTools)
-	}
 }
 
 func TestSanitizeToolName(t *testing.T) {
@@ -451,12 +448,6 @@ func TestBuildToolPlan_ExcludesCollidingToolNamesAcrossRoots(t *testing.T) {
 	if got := toolNames(tools); !slices.Equal(got, want) {
 		t.Fatalf("toolNames = %v, want %v", got, want)
 	}
-	if len(r1.registeredTools) != 0 {
-		t.Fatalf("expected buildToolPlan to leave r1.registeredTools untouched, got %v", r1.registeredTools)
-	}
-	if len(r2.registeredTools) != 0 {
-		t.Fatalf("expected buildToolPlan to leave r2.registeredTools untouched, got %v", r2.registeredTools)
-	}
 }
 
 func TestBuildToolPlan_ExcludesCollidingToolNamesWithinRoot(t *testing.T) {
@@ -486,9 +477,6 @@ func TestBuildToolPlan_ExcludesCollidingToolNamesWithinRoot(t *testing.T) {
 	if got := toolNames(tools); !slices.Equal(got, []string{"lint"}) {
 		t.Fatalf("toolNames = %v, want [lint]", got)
 	}
-	if len(root.registeredTools) != 0 {
-		t.Fatalf("expected buildToolPlan to leave root.registeredTools untouched, got %v", root.registeredTools)
-	}
 }
 
 func TestBuildToolPlan_NoTasks(t *testing.T) {
@@ -513,9 +501,6 @@ func TestBuildToolPlan_NoTasks(t *testing.T) {
 	}
 	if len(handlers) != 0 {
 		t.Fatalf("expected no handlers, got %d", len(handlers))
-	}
-	if len(root.registeredTools) != 0 {
-		t.Fatalf("expected buildToolPlan to leave root.registeredTools untouched, got %v", root.registeredTools)
 	}
 }
 

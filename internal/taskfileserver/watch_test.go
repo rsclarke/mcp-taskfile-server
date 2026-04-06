@@ -406,9 +406,6 @@ func TestReloadRoot_RemovesAllPublicTasks(t *testing.T) {
 	if len(s.registeredTools) != 0 {
 		t.Fatalf("expected all tools to be removed, got %v", toolNames(s.registeredTools))
 	}
-	if len(onlyRoot(t, s).registeredTools) != 0 {
-		t.Fatalf("expected root registeredTools to be empty, got %v", onlyRoot(t, s).registeredTools)
-	}
 }
 
 func TestReloadRoot_UpdatesChangedTask(t *testing.T) {

@@ -91,16 +91,14 @@ func createToolForTask(root *Root, prefix, taskName string, taskDef *ast.Task) *
 }
 
 type toolPlan struct {
-	tools         map[string]mcp.Tool
-	handlers      map[string]mcp.ToolHandler
-	rootToolNames map[string][]string
+	tools    map[string]mcp.Tool
+	handlers map[string]mcp.ToolHandler
 }
 
 // buildToolPlan computes the desired tool registration state without mutating
 // the server or roots.
 func (s *Server) buildToolPlan() toolPlan {
 	type toolCandidate struct {
-		rootURI  string
 		root     *Root
 		taskName string
 		tool     mcp.Tool
@@ -108,17 +106,12 @@ func (s *Server) buildToolPlan() toolPlan {
 	}
 
 	plan := toolPlan{
-		tools:         make(map[string]mcp.Tool),
-		handlers:      make(map[string]mcp.ToolHandler),
-		rootToolNames: make(map[string][]string, len(s.roots)),
+		tools:    make(map[string]mcp.Tool),
+		handlers: make(map[string]mcp.ToolHandler),
 	}
 	candidates := make(map[string][]toolCandidate)
 
-	for uri := range s.roots {
-		plan.rootToolNames[uri] = nil
-	}
-
-	for uri, root := range s.roots {
+	for _, root := range s.roots {
 		if root.taskfile == nil || root.taskfile.Tasks == nil {
 			continue
 		}
@@ -132,7 +125,6 @@ func (s *Server) buildToolPlan() toolPlan {
 
 			tool := createToolForTask(root, prefix, taskName, taskDef)
 			candidates[tool.Name] = append(candidates[tool.Name], toolCandidate{
-				rootURI:  uri,
 				root:     root,
 				taskName: taskName,
 				tool:     *tool,
@@ -162,16 +154,9 @@ func (s *Server) buildToolPlan() toolPlan {
 		candidate := group[0]
 		plan.tools[name] = candidate.tool
 		plan.handlers[name] = candidate.handler
-		plan.rootToolNames[candidate.rootURI] = append(plan.rootToolNames[candidate.rootURI], name)
 	}
 
 	return plan
-}
-
-func (s *Server) applyRootToolNames(rootToolNames map[string][]string) {
-	for uri, root := range s.roots {
-		root.registeredTools = cloneStrings(rootToolNames[uri])
-	}
 }
 
 // toolsEqual reports whether two tool definitions are equivalent
@@ -218,7 +203,6 @@ func (s *Server) syncTools() error {
 		s.mcpServer.AddTool(&t, plan.handlers[name])
 	}
 
-	s.applyRootToolNames(plan.rootToolNames)
 	s.registeredTools = plan.tools
 	return nil
 }

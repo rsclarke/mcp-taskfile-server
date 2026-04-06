@@ -10,11 +10,10 @@ import (
 
 // Root holds the loaded per-root Taskfile data.
 type Root struct {
-	taskfile        *ast.Taskfile
-	workdir         string
-	registeredTools []string
-	watchDirs       []string
-	watchTaskfiles  map[string]struct{}
+	taskfile       *ast.Taskfile
+	workdir        string
+	watchDirs      []string
+	watchTaskfiles map[string]struct{}
 }
 
 // Server represents our MCP server for Taskfile.yml.

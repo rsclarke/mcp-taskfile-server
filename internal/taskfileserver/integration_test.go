@@ -287,11 +287,7 @@ func TestHandleRootsChanged_EquivalentURIAliasKeepsSingleRoot(t *testing.T) {
 	waitForToolCount(t, ts, 0)
 }
 
-func TestHandleInitialized_FallbackToWorkdir(t *testing.T) {
-	// This test verifies that when the client does not support roots,
-	// the server falls back to os.Getwd(). We test the isMethodNotFound
-	// helper directly since exercising a client without roots capability
-	// requires deeper SDK internals.
+func TestIsMethodNotFound(t *testing.T) {
 	err := &jsonrpc.Error{Code: jsonrpc.CodeMethodNotFound, Message: "not found"}
 	if !isMethodNotFound(err) {
 		t.Error("expected isMethodNotFound to return true for CodeMethodNotFound")
