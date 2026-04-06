@@ -107,6 +107,16 @@ func toolNames(tools map[string]mcp.Tool) []string {
 	return names
 }
 
+// snapshotFromServer builds a toolStateSnapshot from the server's current
+// roots without holding the mutex. Intended for tests only.
+func snapshotFromServer(s *Server) toolStateSnapshot {
+	snap := toolStateSnapshot{roots: make(map[string]*Root, len(s.roots))}
+	for uri, root := range s.roots {
+		snap.roots[uri] = root
+	}
+	return snap
+}
+
 // snapshotRoots returns a rootSnapshot slice for use with watchTaskfiles.
 func snapshotRoots(s *Server) []rootSnapshot {
 	snap := make([]rootSnapshot, 0, len(s.roots))

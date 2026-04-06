@@ -95,9 +95,9 @@ type toolPlan struct {
 	handlers map[string]mcp.ToolHandler
 }
 
-// buildToolPlan computes the desired tool registration state without mutating
-// the server or roots.
-func (s *Server) buildToolPlan() toolPlan {
+// buildToolPlan computes the desired tool registration state from a snapshot
+// without accessing or mutating the server.
+func buildToolPlan(snap toolStateSnapshot) toolPlan {
 	type toolCandidate struct {
 		root     *Root
 		taskName string
@@ -111,12 +111,12 @@ func (s *Server) buildToolPlan() toolPlan {
 	}
 	candidates := make(map[string][]toolCandidate)
 
-	for _, root := range s.roots {
+	for _, root := range snap.roots {
 		if root.taskfile == nil || root.taskfile.Tasks == nil {
 			continue
 		}
 
-		prefix := s.rootPrefix(root)
+		prefix := rootPrefix(root, len(snap.roots))
 
 		for taskName, taskDef := range root.taskfile.Tasks.All(nil) {
 			if taskDef.Internal {
@@ -179,7 +179,8 @@ func toolsEqual(a, b *mcp.Tool) bool {
 // syncTools builds the current tool set, diffs it against previously
 // registered tools, and adds/removes tools on the MCP server as needed.
 func (s *Server) syncTools() error {
-	plan := s.buildToolPlan()
+	snap := toolStateSnapshot{roots: s.roots}
+	plan := buildToolPlan(snap)
 
 	// Remove tools that no longer exist or have changed
 	var stale []string

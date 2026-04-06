@@ -116,7 +116,7 @@ func TestCreateToolForTask_OverrideVars(t *testing.T) {
 func TestBuildToolPlan_SkipsInternal(t *testing.T) {
 	s := loadServerFromFixture(t, "internal")
 
-	tools := s.buildToolPlan().tools
+	tools := buildToolPlan(snapshotFromServer(s)).tools
 
 	if len(tools) != 1 {
 		t.Fatalf("expected 1 tool, got %d", len(tools))
@@ -290,7 +290,7 @@ func TestCreateToolForTask_LeadingDot(t *testing.T) {
 func TestBuildToolPlan_Namespaced(t *testing.T) {
 	s := loadServerFromFixture(t, "namespaced")
 
-	tools := s.buildToolPlan().tools
+	tools := buildToolPlan(snapshotFromServer(s)).tools
 
 	for _, want := range []string{"db_migrate", "uv_run", "uv_run_dev_lint-imports"} {
 		if _, ok := tools[want]; !ok {
@@ -302,7 +302,7 @@ func TestBuildToolPlan_Namespaced(t *testing.T) {
 func TestBuildToolPlan_Includes(t *testing.T) {
 	s := loadServerFromFixture(t, "includes")
 
-	tools := s.buildToolPlan().tools
+	tools := buildToolPlan(snapshotFromServer(s)).tools
 
 	for _, want := range []string{"build", "docs_serve", "docs_build"} {
 		if _, ok := tools[want]; !ok {
@@ -314,7 +314,7 @@ func TestBuildToolPlan_Includes(t *testing.T) {
 func TestBuildToolPlan_Wildcard(t *testing.T) {
 	s := loadServerFromFixture(t, "wildcard")
 
-	tools := s.buildToolPlan().tools
+	tools := buildToolPlan(snapshotFromServer(s)).tools
 
 	for _, want := range []string{"start", "deploy"} {
 		if _, ok := tools[want]; !ok {
@@ -326,7 +326,7 @@ func TestBuildToolPlan_Wildcard(t *testing.T) {
 func TestBuildToolPlan_HandlerExecutesSelectedTool(t *testing.T) {
 	s := loadServerFromFixture(t, "basic")
 
-	plan := s.buildToolPlan()
+	plan := buildToolPlan(snapshotFromServer(s))
 	handler, ok := plan.handlers["greet"]
 	if !ok {
 		t.Fatalf("missing handler for greet, got %v", toolNames(plan.tools))
@@ -346,7 +346,7 @@ func TestBuildToolPlan_HandlerExecutesSelectedTool(t *testing.T) {
 func TestBuildToolPlan_HandlerPassesVariables(t *testing.T) {
 	s := newTempServer(t, []byte("version: '3'\ntasks:\n  greet:\n    desc: Greet someone\n    cmds:\n      - echo hello {{.NAME}}\n"))
 
-	plan := s.buildToolPlan()
+	plan := buildToolPlan(snapshotFromServer(s))
 	handler, ok := plan.handlers["greet"]
 	if !ok {
 		t.Fatalf("missing handler for greet, got %v", toolNames(plan.tools))
@@ -366,7 +366,7 @@ func TestBuildToolPlan_HandlerPassesVariables(t *testing.T) {
 func TestBuildToolPlan_HandlerReportsTaskFailure(t *testing.T) {
 	s := newTempServer(t, []byte("version: '3'\ntasks:\n  fail:\n    desc: A failing task\n    cmds:\n      - exit 1\n"))
 
-	plan := s.buildToolPlan()
+	plan := buildToolPlan(snapshotFromServer(s))
 	handler, ok := plan.handlers["fail"]
 	if !ok {
 		t.Fatalf("missing handler for fail, got %v", toolNames(plan.tools))
@@ -386,7 +386,7 @@ func TestBuildToolPlan_HandlerReportsTaskFailure(t *testing.T) {
 func TestBuildToolPlan_HandlerExecutesWildcardTool(t *testing.T) {
 	s := loadServerFromFixture(t, "wildcard")
 
-	plan := s.buildToolPlan()
+	plan := buildToolPlan(snapshotFromServer(s))
 	handler, ok := plan.handlers["deploy"]
 	if !ok {
 		t.Fatalf("missing handler for deploy, got %v", toolNames(plan.tools))
@@ -439,7 +439,7 @@ func TestBuildToolPlan_HandlerSelectsPrefixedRootTool(t *testing.T) {
 		},
 	}
 
-	plan := s.buildToolPlan()
+	plan := buildToolPlan(snapshotFromServer(s))
 	frontendHandler, ok := plan.handlers["frontend_serve"]
 	if !ok {
 		t.Fatalf("missing frontend handler, got %v", toolNames(plan.tools))
@@ -577,7 +577,7 @@ func TestBuildToolPlan_ExcludesCollidingToolNamesAcrossRoots(t *testing.T) {
 		},
 	}
 
-	plan := s.buildToolPlan()
+	plan := buildToolPlan(snapshotFromServer(s))
 	tools, handlers := plan.tools, plan.handlers
 
 	if _, ok := tools["dup_hello"]; ok {
@@ -609,7 +609,7 @@ func TestBuildToolPlan_ExcludesCollidingToolNamesWithinRoot(t *testing.T) {
 		roots: map[string]*Root{dirToURI(dir): root},
 	}
 
-	plan := s.buildToolPlan()
+	plan := buildToolPlan(snapshotFromServer(s))
 	tools, handlers := plan.tools, plan.handlers
 	if _, ok := tools["build_dev"]; ok {
 		t.Fatalf("expected colliding tool build_dev to be excluded, got %v", toolNames(tools))
@@ -637,7 +637,7 @@ func TestBuildToolPlan_NoTasks(t *testing.T) {
 		roots: map[string]*Root{dirToURI(dir): root},
 	}
 
-	plan := s.buildToolPlan()
+	plan := buildToolPlan(snapshotFromServer(s))
 	tools, handlers := plan.tools, plan.handlers
 	if len(tools) != 0 {
 		t.Fatalf("expected no tools, got %v", toolNames(tools))

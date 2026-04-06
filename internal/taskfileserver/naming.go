@@ -79,8 +79,8 @@ func sanitizeRootPrefix(name string) string {
 // rootPrefix returns the tool name prefix for a root. When there is only one
 // root the prefix is empty; with multiple roots it is derived from the root
 // directory's basename.
-func (s *Server) rootPrefix(root *Root) string {
-	if len(s.roots) <= 1 {
+func rootPrefix(root *Root, totalRoots int) string {
+	if totalRoots <= 1 {
 		return ""
 	}
 	return sanitizeRootPrefix(filepath.Base(root.workdir))
