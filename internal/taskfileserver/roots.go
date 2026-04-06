@@ -117,47 +117,59 @@ func (s *Server) unloadRoot(uri string) {
 	delete(s.roots, uri)
 }
 
-// disableRootTools clears the loaded Taskfile state for a root and syncs the
-// server so any previously registered tools are withdrawn. The existing watch
-// set is preserved so restoring the Taskfile can be detected and reloaded.
-func (s *Server) disableRootTools(root *Root) error {
+// disableRootToolsLocked clears the loaded Taskfile state for a root and
+// bumps the generation. The caller must hold s.mu. The actual MCP sync
+// is performed by the caller after releasing the lock.
+func (s *Server) disableRootToolsLocked(root *Root) {
 	root.taskfile = nil
 	s.generation++
-	return s.syncTools()
 }
 
 // reloadRoot re-creates the task executor for a given canonical root URI and
 // syncs the global MCP tool set.
 func (s *Server) reloadRoot(ctx context.Context, uri string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	root, ok := s.roots[uri]
 	if !ok {
+		s.mu.Unlock()
 		return fmt.Errorf("unknown root %q", uri)
 	}
+	workdir := root.workdir
+	s.mu.Unlock()
 
-	watchTaskfiles, watchDirs, err := loadTaskfileWatchSet(ctx, root.workdir)
+	watchTaskfiles, watchDirs, err := loadTaskfileWatchSet(ctx, workdir)
 	if err != nil {
-		if syncErr := s.disableRootTools(root); syncErr != nil {
+		s.mu.Lock()
+		s.disableRootToolsLocked(root)
+		s.mu.Unlock()
+		syncErr := s.syncTools()
+		if syncErr != nil {
 			return fmt.Errorf("failed to reload root %s: %w", uri, errors.Join(err, fmt.Errorf("failed to clear stale tools: %w", syncErr)))
 		}
 		return fmt.Errorf("failed to reload root %s: %w", uri, err)
 	}
 
 	executor := task.NewExecutor(
-		task.WithDir(root.workdir),
+		task.WithDir(workdir),
 		task.WithSilent(true),
 	)
 	if err := executor.Setup(); err != nil {
-		if syncErr := s.disableRootTools(root); syncErr != nil {
-			return fmt.Errorf("failed to setup task executor for %s: %w", root.workdir, errors.Join(err, fmt.Errorf("failed to clear stale tools: %w", syncErr)))
+		s.mu.Lock()
+		s.disableRootToolsLocked(root)
+		s.mu.Unlock()
+		syncErr := s.syncTools()
+		if syncErr != nil {
+			return fmt.Errorf("failed to setup task executor for %s: %w", workdir, errors.Join(err, fmt.Errorf("failed to clear stale tools: %w", syncErr)))
 		}
-		return fmt.Errorf("failed to setup task executor for %s: %w", root.workdir, err)
+		return fmt.Errorf("failed to setup task executor for %s: %w", workdir, err)
 	}
+
+	s.mu.Lock()
 	root.taskfile = executor.Taskfile
 	root.watchDirs = watchDirs
 	root.watchTaskfiles = watchTaskfiles
 	s.generation++
+	s.mu.Unlock()
+
 	return s.syncTools()
 }

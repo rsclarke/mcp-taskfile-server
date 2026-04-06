@@ -2,6 +2,7 @@ package taskfileserver
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -111,9 +112,7 @@ func toolNames(tools map[string]mcp.Tool) []string {
 // roots without holding the mutex. Intended for tests only.
 func snapshotFromServer(s *Server) toolStateSnapshot {
 	snap := toolStateSnapshot{roots: make(map[string]*Root, len(s.roots))}
-	for uri, root := range s.roots {
-		snap.roots[uri] = root
-	}
+	maps.Copy(snap.roots, s.roots)
 	return snap
 }
 

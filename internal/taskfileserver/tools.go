@@ -195,14 +195,24 @@ func diffTools(old, desired map[string]mcp.Tool) (stale, added []string) {
 	return stale, added
 }
 
-// syncTools builds the current tool set, diffs it against previously
-// registered tools, and adds/removes tools on the MCP server as needed.
+// syncTools snapshots state under lock, builds a plan without the lock,
+// applies MCP registration changes, then re-acquires the lock to commit
+// bookkeeping. If the generation has advanced while the lock was released
+// (another mutator ran concurrently), the stale plan is discarded because
+// that mutator will produce its own up-to-date sync.
 func (s *Server) syncTools() error {
-	snap := toolStateSnapshot{roots: s.roots}
+	// Phase 1: snapshot under lock.
+	s.mu.Lock()
+	snap := s.snapshotToolStateLocked()
+	oldTools := make(map[string]mcp.Tool, len(s.registeredTools))
+	maps.Copy(oldTools, s.registeredTools)
+	s.mu.Unlock()
+
+	// Phase 2: pure planning — no lock held.
 	plan := buildToolPlan(snap)
+	stale, added := diffTools(oldTools, plan.tools)
 
-	stale, added := diffTools(s.registeredTools, plan.tools)
-
+	// Phase 3: apply MCP side effects — no lock held.
 	if len(stale) > 0 {
 		s.mcpServer.RemoveTools(stale...)
 	}
@@ -211,6 +221,12 @@ func (s *Server) syncTools() error {
 		s.mcpServer.AddTool(&t, plan.handlers[name])
 	}
 
+	// Phase 4: commit bookkeeping under lock with generation check.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.generation != snap.generation {
+		return nil
+	}
 	s.registeredTools = plan.tools
 	return nil
 }

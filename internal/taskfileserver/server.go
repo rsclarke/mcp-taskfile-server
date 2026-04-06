@@ -94,9 +94,9 @@ func (s *Server) reconcileRoots(ctx context.Context, roots []*mcp.Root, opts roo
 		s.mu.Unlock()
 		return errors.New("no valid roots found")
 	}
+	s.mu.Unlock()
 
 	syncErr := s.syncTools()
-	s.mu.Unlock()
 	if syncErr == nil || opts.restartWatchersOnSyncErr {
 		s.restartWatchers(ctx)
 	}

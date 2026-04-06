@@ -2,6 +2,7 @@ package taskfileserver
 
 import (
 	"context"
+	"maps"
 	"sync"
 
 	"github.com/go-task/task/v3/taskfile/ast"
@@ -42,9 +43,7 @@ func (s *Server) snapshotToolStateLocked() toolStateSnapshot {
 		generation: s.generation,
 		roots:      make(map[string]*Root, len(s.roots)),
 	}
-	for uri, root := range s.roots {
-		snap.roots[uri] = root
-	}
+	maps.Copy(snap.roots, s.roots)
 	return snap
 }
 
