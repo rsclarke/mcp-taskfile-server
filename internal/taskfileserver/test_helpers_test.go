@@ -1,0 +1,253 @@
+package taskfileserver
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"testing"
+	"time"
+
+	"github.com/go-task/task/v3/taskfile/ast"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+// loadServerFromFixture creates a Server from a testdata fixture directory.
+func loadServerFromFixture(t *testing.T, name string) *Server {
+	t.Helper()
+
+	_, filename, _, _ := runtime.Caller(0)
+	dir := filepath.Join(filepath.Dir(filename), "..", "..", "testdata", name)
+
+	root, err := loadRoot(t.Context(), dir)
+	if err != nil {
+		t.Fatalf("failed to load root for fixture %q: %v", name, err)
+	}
+
+	uri := dirToURI(dir)
+	return &Server{
+		roots: map[string]*Root{uri: root},
+	}
+}
+
+// onlyRoot returns the single Root from a server, or fails the test.
+func onlyRoot(t *testing.T, s *Server) *Root {
+	t.Helper()
+	if len(s.roots) != 1 {
+		t.Fatalf("expected 1 root, got %d", len(s.roots))
+	}
+	for _, root := range s.roots {
+		return root
+	}
+	return nil
+}
+
+// onlyRootURI returns the single root URI from a server, or fails the test.
+func onlyRootURI(t *testing.T, s *Server) string {
+	t.Helper()
+	if len(s.roots) != 1 {
+		t.Fatalf("expected 1 root, got %d", len(s.roots))
+	}
+	for uri := range s.roots {
+		return uri
+	}
+	return ""
+}
+
+// newTestServer creates a Server from a fixture with a real *mcp.Server attached.
+func newTestServer(t *testing.T, fixture string) *Server {
+	t.Helper()
+	s := loadServerFromFixture(t, fixture)
+	s.mcpServer = mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
+	s.registeredTools = make(map[string]mcp.Tool)
+	return s
+}
+
+// schemaProperties marshals a tool's InputSchema to JSON, then unmarshals it
+// to return the properties map. This handles InputSchema being any (e.g. json.RawMessage).
+func schemaProperties(t *testing.T, tool *mcp.Tool) map[string]any {
+	t.Helper()
+
+	b, err := json.Marshal(tool.InputSchema)
+	if err != nil {
+		t.Fatalf("failed to marshal InputSchema: %v", err)
+	}
+
+	var schema map[string]any
+	if err := json.Unmarshal(b, &schema); err != nil {
+		t.Fatalf("failed to unmarshal InputSchema: %v", err)
+	}
+
+	props, _ := schema["properties"].(map[string]any)
+	return props
+}
+
+// lookupTask finds a task by name in the taskfile or fails the test.
+func lookupTask(t *testing.T, tf *ast.Taskfile, name string) *ast.Task {
+	t.Helper()
+
+	for taskName, taskDef := range tf.Tasks.All(nil) {
+		if taskName == name {
+			return taskDef
+		}
+	}
+
+	t.Fatalf("task %q not found in taskfile", name)
+	return nil
+}
+
+// toolNames returns the sorted keys from a tool map for use in error messages.
+func toolNames(tools map[string]mcp.Tool) []string {
+	names := make([]string, 0, len(tools))
+	for name := range tools {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// snapshotRoots returns a rootSnapshot slice for use with watchTaskfiles.
+func snapshotRoots(s *Server) []rootSnapshot {
+	snap := make([]rootSnapshot, 0, len(s.roots))
+	for uri := range s.roots {
+		snap = append(snap, rootSnapshot{uri: uri})
+	}
+	return snap
+}
+
+// newTempServer creates a Server backed by a temp directory containing
+// the given Taskfile content, with a real *mcp.Server and initial syncTools.
+func newTempServer(t *testing.T, taskfileContent []byte) *Server {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), taskfileContent, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return newServerForDir(t, dir)
+}
+
+// newServerForDir creates a Server backed by a given directory,
+// with a real *mcp.Server and initial syncTools.
+func newServerForDir(t *testing.T, dir string) *Server {
+	t.Helper()
+	root, err := loadRoot(t.Context(), dir)
+	if err != nil {
+		t.Fatalf("loadRoot: %v", err)
+	}
+	uri := dirToURI(dir)
+	s := &Server{
+		roots:           map[string]*Root{uri: root},
+		mcpServer:       mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil),
+		registeredTools: make(map[string]mcp.Tool),
+	}
+	if err := s.syncTools(); err != nil {
+		t.Fatalf("initial syncTools: %v", err)
+	}
+	return s
+}
+
+// schemaRequired extracts the "required" array from a tool's InputSchema.
+func schemaRequired(t *testing.T, tool *mcp.Tool) []string {
+	t.Helper()
+
+	b, err := json.Marshal(tool.InputSchema)
+	if err != nil {
+		t.Fatalf("failed to marshal InputSchema: %v", err)
+	}
+
+	var schema map[string]any
+	if err := json.Unmarshal(b, &schema); err != nil {
+		t.Fatalf("failed to unmarshal InputSchema: %v", err)
+	}
+
+	rawReq, ok := schema["required"]
+	if !ok {
+		return nil
+	}
+
+	arr, ok := rawReq.([]any)
+	if !ok {
+		return nil
+	}
+
+	result := make([]string, 0, len(arr))
+	for _, v := range arr {
+		if s, ok := v.(string); ok {
+			result = append(result, s)
+		}
+	}
+	return result
+}
+
+// waitForTools waits until the server has at least minTools registered.
+func waitForTools(t *testing.T, ts *Server, minTools int) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-deadline:
+			ts.mu.Lock()
+			n := len(ts.registeredTools)
+			ts.mu.Unlock()
+			t.Fatalf("timed out waiting for %d tools, have %d", minTools, n)
+		case <-ticker.C:
+			ts.mu.Lock()
+			n := len(ts.registeredTools)
+			ts.mu.Unlock()
+			if n >= minTools {
+				return
+			}
+		}
+	}
+}
+
+// waitForToolCount waits until the server has exactly count tools registered.
+func waitForToolCount(t *testing.T, ts *Server, count int) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-deadline:
+			ts.mu.Lock()
+			n := len(ts.registeredTools)
+			ts.mu.Unlock()
+			t.Fatalf("timed out waiting for %d tools, have %d", count, n)
+		case <-ticker.C:
+			ts.mu.Lock()
+			n := len(ts.registeredTools)
+			ts.mu.Unlock()
+			if n == count {
+				return
+			}
+		}
+	}
+}
+
+// waitForRootCount waits until the server has exactly count loaded roots.
+func waitForRootCount(t *testing.T, ts *Server, count int) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-deadline:
+			ts.mu.Lock()
+			n := len(ts.roots)
+			ts.mu.Unlock()
+			t.Fatalf("timed out waiting for %d roots, have %d", count, n)
+		case <-ticker.C:
+			ts.mu.Lock()
+			n := len(ts.roots)
+			ts.mu.Unlock()
+			if n == count {
+				return
+			}
+		}
+	}
+}
