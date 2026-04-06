@@ -122,6 +122,7 @@ func (s *Server) unloadRoot(uri string) {
 // set is preserved so restoring the Taskfile can be detected and reloaded.
 func (s *Server) disableRootTools(root *Root) error {
 	root.taskfile = nil
+	s.generation++
 	return s.syncTools()
 }
 
@@ -157,5 +158,6 @@ func (s *Server) reloadRoot(ctx context.Context, uri string) error {
 	root.taskfile = executor.Taskfile
 	root.watchDirs = watchDirs
 	root.watchTaskfiles = watchTaskfiles
+	s.generation++
 	return s.syncTools()
 }
