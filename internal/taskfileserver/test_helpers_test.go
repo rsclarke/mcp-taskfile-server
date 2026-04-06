@@ -180,6 +180,51 @@ func schemaRequired(t *testing.T, tool *mcp.Tool) []string {
 	return result
 }
 
+func rawToolArguments(t *testing.T, arguments any) json.RawMessage {
+	t.Helper()
+	if arguments == nil {
+		return nil
+	}
+
+	raw, err := json.Marshal(arguments)
+	if err != nil {
+		t.Fatalf("failed to marshal tool arguments: %v", err)
+	}
+	return raw
+}
+
+func callToolHandler(t *testing.T, handler mcp.ToolHandler, name string, arguments any) *mcp.CallToolResult {
+	t.Helper()
+
+	request := &mcp.CallToolRequest{
+		Params: &mcp.CallToolParamsRaw{Name: name},
+	}
+	if raw := rawToolArguments(t, arguments); raw != nil {
+		request.Params.Arguments = raw
+	}
+
+	result, err := handler(t.Context(), request)
+	if err != nil {
+		t.Fatalf("handler returned error: %v", err)
+	}
+	return result
+}
+
+func toolResultText(t *testing.T, result *mcp.CallToolResult) string {
+	t.Helper()
+
+	if len(result.Content) != 1 {
+		t.Fatalf("expected exactly 1 content item, got %d", len(result.Content))
+	}
+
+	text, ok := result.Content[0].(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("expected TextContent, got %T", result.Content[0])
+	}
+
+	return text.Text
+}
+
 // waitForTools waits until the server has at least minTools registered.
 func waitForTools(t *testing.T, ts *Server, minTools int) {
 	t.Helper()

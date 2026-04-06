@@ -323,6 +323,149 @@ func TestBuildToolPlan_Wildcard(t *testing.T) {
 	}
 }
 
+func TestBuildToolPlan_HandlerExecutesSelectedTool(t *testing.T) {
+	s := loadServerFromFixture(t, "basic")
+
+	plan := s.buildToolPlan()
+	handler, ok := plan.handlers["greet"]
+	if !ok {
+		t.Fatalf("missing handler for greet, got %v", toolNames(plan.tools))
+	}
+
+	result := callToolHandler(t, handler, "greet", nil)
+	if result.IsError {
+		t.Fatalf("expected success, got IsError=true: %s", toolResultText(t, result))
+	}
+
+	text := toolResultText(t, result)
+	if !strings.Contains(text, "completed successfully") || !strings.Contains(text, "hello") {
+		t.Fatalf("expected successful greet output, got %q", text)
+	}
+}
+
+func TestBuildToolPlan_HandlerPassesVariables(t *testing.T) {
+	s := newTempServer(t, []byte("version: '3'\ntasks:\n  greet:\n    desc: Greet someone\n    cmds:\n      - echo hello {{.NAME}}\n"))
+
+	plan := s.buildToolPlan()
+	handler, ok := plan.handlers["greet"]
+	if !ok {
+		t.Fatalf("missing handler for greet, got %v", toolNames(plan.tools))
+	}
+
+	result := callToolHandler(t, handler, "greet", map[string]string{"NAME": "world"})
+	if result.IsError {
+		t.Fatalf("expected success, got IsError=true: %s", toolResultText(t, result))
+	}
+
+	text := toolResultText(t, result)
+	if !strings.Contains(text, "world") {
+		t.Fatalf("expected output to contain world, got %q", text)
+	}
+}
+
+func TestBuildToolPlan_HandlerReportsTaskFailure(t *testing.T) {
+	s := newTempServer(t, []byte("version: '3'\ntasks:\n  fail:\n    desc: A failing task\n    cmds:\n      - exit 1\n"))
+
+	plan := s.buildToolPlan()
+	handler, ok := plan.handlers["fail"]
+	if !ok {
+		t.Fatalf("missing handler for fail, got %v", toolNames(plan.tools))
+	}
+
+	result := callToolHandler(t, handler, "fail", nil)
+	if !result.IsError {
+		t.Fatal("expected IsError=true for a failing task")
+	}
+
+	text := toolResultText(t, result)
+	if !strings.Contains(text, "failed") {
+		t.Fatalf("expected failure message, got %q", text)
+	}
+}
+
+func TestBuildToolPlan_HandlerExecutesWildcardTool(t *testing.T) {
+	s := loadServerFromFixture(t, "wildcard")
+
+	plan := s.buildToolPlan()
+	handler, ok := plan.handlers["deploy"]
+	if !ok {
+		t.Fatalf("missing handler for deploy, got %v", toolNames(plan.tools))
+	}
+
+	result := callToolHandler(t, handler, "deploy", map[string]string{"MATCH": "api,production"})
+	if result.IsError {
+		t.Fatalf("expected success, got IsError=true: %s", toolResultText(t, result))
+	}
+
+	text := toolResultText(t, result)
+	if !strings.Contains(text, "api") || !strings.Contains(text, "production") {
+		t.Fatalf("expected output to contain wildcard values, got %q", text)
+	}
+}
+
+func TestBuildToolPlan_HandlerSelectsPrefixedRootTool(t *testing.T) {
+	parent := t.TempDir()
+	frontendDir := filepath.Join(parent, "frontend")
+	backendDir := filepath.Join(parent, "backend")
+	if err := os.Mkdir(frontendDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(backendDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	frontendTaskfile := []byte("version: '3'\ntasks:\n  serve:\n    desc: Serve frontend\n    cmds:\n      - echo frontend\n")
+	backendTaskfile := []byte("version: '3'\ntasks:\n  serve:\n    desc: Serve backend\n    cmds:\n      - echo backend\n")
+	if err := os.WriteFile(filepath.Join(frontendDir, "Taskfile.yml"), frontendTaskfile, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(backendDir, "Taskfile.yml"), backendTaskfile, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	frontendRoot, err := loadRoot(t.Context(), frontendDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backendRoot, err := loadRoot(t.Context(), backendDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{
+		roots: map[string]*Root{
+			dirToURI(frontendDir): frontendRoot,
+			dirToURI(backendDir):  backendRoot,
+		},
+	}
+
+	plan := s.buildToolPlan()
+	frontendHandler, ok := plan.handlers["frontend_serve"]
+	if !ok {
+		t.Fatalf("missing frontend handler, got %v", toolNames(plan.tools))
+	}
+	backendHandler, ok := plan.handlers["backend_serve"]
+	if !ok {
+		t.Fatalf("missing backend handler, got %v", toolNames(plan.tools))
+	}
+
+	frontendResult := callToolHandler(t, frontendHandler, "frontend_serve", nil)
+	if frontendResult.IsError {
+		t.Fatalf("expected frontend success, got IsError=true: %s", toolResultText(t, frontendResult))
+	}
+	backendResult := callToolHandler(t, backendHandler, "backend_serve", nil)
+	if backendResult.IsError {
+		t.Fatalf("expected backend success, got IsError=true: %s", toolResultText(t, backendResult))
+	}
+
+	if text := toolResultText(t, frontendResult); !strings.Contains(text, "frontend") {
+		t.Fatalf("expected frontend handler output, got %q", text)
+	}
+	if text := toolResultText(t, backendResult); !strings.Contains(text, "backend") {
+		t.Fatalf("expected backend handler output, got %q", text)
+	}
+}
+
 func TestToolsEqual(t *testing.T) {
 	schema1 := json.RawMessage(`{"type":"object","properties":{"FOO":{"type":"string"}}}`)
 	schema2 := json.RawMessage(`{"type":"object","properties":{"BAR":{"type":"string"}}}`)
