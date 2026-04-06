@@ -31,36 +31,15 @@ func isMethodNotFound(err error) bool {
 	return errors.As(err, &wireErr) && wireErr.Code == jsonrpc.CodeMethodNotFound
 }
 
-// loadRootsFromSession queries the client for its root list and loads each
-// one. If the client does not support roots, it falls back to os.Getwd().
-func (s *Server) loadRootsFromSession(ctx context.Context, session *mcp.ServerSession) error {
-	rootRes, err := session.ListRoots(ctx, nil)
-	if err != nil {
-		if !isMethodNotFound(err) {
-			return fmt.Errorf("failed to list roots: %w", err)
-		}
-		// Client does not support roots; fall back to working directory.
-		workdir, wdErr := os.Getwd()
-		if wdErr != nil {
-			return fmt.Errorf("failed to get working directory: %w", wdErr)
-		}
-		uri := dirToURI(workdir)
-		root, loadErr := loadRoot(ctx, workdir)
-		if loadErr != nil {
-			return loadErr
-		}
+type rootReconcileOptions struct {
+	removeMissing            bool
+	requireNonEmpty          bool
+	restartWatchersOnSyncErr bool
+}
 
-		s.mu.Lock()
-		s.roots[uri] = root
-		syncErr := s.syncTools()
-		s.mu.Unlock()
-		if syncErr != nil {
-			return syncErr
-		}
-		s.restartWatchers(ctx)
-		return nil
-	}
-
+// reconcileRoots canonicalizes the incoming roots, loads any new ones, and
+// applies the resulting set to the server state.
+func (s *Server) reconcileRoots(ctx context.Context, roots []*mcp.Root, opts rootReconcileOptions) error {
 	s.mu.Lock()
 	existing := make(map[string]struct{}, len(s.roots))
 	for uri := range s.roots {
@@ -68,13 +47,15 @@ func (s *Server) loadRootsFromSession(ctx context.Context, session *mcp.ServerSe
 	}
 	s.mu.Unlock()
 
-	loadedRoots := make(map[string]*Root, len(rootRes.Roots))
-	for _, r := range rootRes.Roots {
+	desiredURIs := make(map[string]struct{}, len(roots))
+	loadedRoots := make(map[string]*Root, len(roots))
+	for _, r := range roots {
 		canonicalURI, dir, parseErr := canonicalRootURI(r.URI)
 		if parseErr != nil {
 			log.Printf("skipping root with invalid URI %q: %v", r.URI, parseErr)
 			continue
 		}
+		desiredURIs[canonicalURI] = struct{}{}
 		if _, exists := existing[canonicalURI]; exists {
 			continue
 		}
@@ -90,29 +71,58 @@ func (s *Server) loadRootsFromSession(ctx context.Context, session *mcp.ServerSe
 	}
 
 	s.mu.Lock()
+	if opts.removeMissing {
+		for uri := range s.roots {
+			if _, ok := desiredURIs[uri]; !ok {
+				s.unloadRoot(uri)
+			}
+		}
+	}
 	for uri, root := range loadedRoots {
 		if _, exists := s.roots[uri]; exists {
 			continue
 		}
 		s.roots[uri] = root
 	}
-	if len(s.roots) == 0 {
+	if opts.requireNonEmpty && len(s.roots) == 0 {
 		s.mu.Unlock()
 		return errors.New("no valid roots found")
 	}
 
 	syncErr := s.syncTools()
 	s.mu.Unlock()
-	if syncErr != nil {
-		return syncErr
+	if syncErr == nil || opts.restartWatchersOnSyncErr {
+		s.restartWatchers(ctx)
 	}
-	s.restartWatchers(ctx)
-	return nil
+	return syncErr
+}
+
+// initializeRootsFromSession queries the client for its root list and loads
+// each one. If the client does not support roots, it falls back to os.Getwd().
+func (s *Server) initializeRootsFromSession(ctx context.Context, session *mcp.ServerSession) error {
+	rootRes, err := session.ListRoots(ctx, nil)
+	if err != nil {
+		if !isMethodNotFound(err) {
+			return fmt.Errorf("failed to list roots: %w", err)
+		}
+		// Client does not support roots; fall back to working directory.
+		workdir, wdErr := os.Getwd()
+		if wdErr != nil {
+			return fmt.Errorf("failed to get working directory: %w", wdErr)
+		}
+		return s.reconcileRoots(ctx, []*mcp.Root{{URI: dirToURI(workdir)}}, rootReconcileOptions{
+			requireNonEmpty: true,
+		})
+	}
+
+	return s.reconcileRoots(ctx, rootRes.Roots, rootReconcileOptions{
+		requireNonEmpty: true,
+	})
 }
 
 // HandleInitialized is called after the client handshake completes.
 func (s *Server) HandleInitialized(ctx context.Context, req *mcp.InitializedRequest) {
-	if err := s.loadRootsFromSession(ctx, req.Session); err != nil {
+	if err := s.initializeRootsFromSession(ctx, req.Session); err != nil {
 		log.Printf("failed to initialize roots: %v", err)
 	}
 }
@@ -125,59 +135,10 @@ func (s *Server) HandleRootsChanged(ctx context.Context, req *mcp.RootsListChang
 		return
 	}
 
-	// Build a set of new canonical root identities.
-	newURIs := make(map[string]struct{}, len(rootRes.Roots))
-
-	s.mu.Lock()
-	existing := make(map[string]struct{}, len(s.roots))
-	for uri := range s.roots {
-		existing[uri] = struct{}{}
+	if err := s.reconcileRoots(ctx, rootRes.Roots, rootReconcileOptions{
+		removeMissing:            true,
+		restartWatchersOnSyncErr: true,
+	}); err != nil {
+		log.Printf("failed to sync tools after roots change: %v", err)
 	}
-	s.mu.Unlock()
-
-	loadedRoots := make(map[string]*Root)
-	for _, r := range rootRes.Roots {
-		canonicalURI, dir, parseErr := canonicalRootURI(r.URI)
-		if parseErr != nil {
-			log.Printf("skipping root with invalid URI %q: %v", r.URI, parseErr)
-			continue
-		}
-		newURIs[canonicalURI] = struct{}{}
-		if _, exists := existing[canonicalURI]; exists {
-			continue
-		}
-		if _, exists := loadedRoots[canonicalURI]; exists {
-			continue
-		}
-		root, loadErr := loadRoot(ctx, dir)
-		if loadErr != nil {
-			log.Printf("failed to load root %q: %v", r.URI, loadErr)
-			continue
-		}
-		loadedRoots[canonicalURI] = root
-	}
-
-	s.mu.Lock()
-
-	// Remove roots that are no longer present.
-	for uri := range s.roots {
-		if _, ok := newURIs[uri]; !ok {
-			s.unloadRoot(uri)
-		}
-	}
-
-	// Add roots that are new.
-	for uri, root := range loadedRoots {
-		if _, exists := s.roots[uri]; exists {
-			continue
-		}
-		s.roots[uri] = root
-	}
-
-	syncErr := s.syncTools()
-	s.mu.Unlock()
-	if syncErr != nil {
-		log.Printf("failed to sync tools after roots change: %v", syncErr)
-	}
-	s.restartWatchers(ctx)
 }
