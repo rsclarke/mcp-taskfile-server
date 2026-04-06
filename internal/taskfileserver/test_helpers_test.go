@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -284,6 +285,45 @@ func waitForToolCount(t *testing.T, ts *Server, count int) {
 			}
 		}
 	}
+}
+
+// trackingRegistry wraps a toolRegistry and tracks the net set of tools
+// currently registered, providing an observable view of MCP-side state.
+type trackingRegistry struct {
+	inner toolRegistry
+	mu    sync.Mutex
+	tools map[string]struct{}
+}
+
+func newTrackingRegistry(inner toolRegistry) *trackingRegistry {
+	return &trackingRegistry{
+		inner: inner,
+		tools: make(map[string]struct{}),
+	}
+}
+
+func (r *trackingRegistry) AddTool(tool *mcp.Tool, handler mcp.ToolHandler) {
+	r.inner.AddTool(tool, handler)
+	r.mu.Lock()
+	r.tools[tool.Name] = struct{}{}
+	r.mu.Unlock()
+}
+
+func (r *trackingRegistry) RemoveTools(names ...string) {
+	r.inner.RemoveTools(names...)
+	r.mu.Lock()
+	for _, n := range names {
+		delete(r.tools, n)
+	}
+	r.mu.Unlock()
+}
+
+func (r *trackingRegistry) toolSet() map[string]struct{} {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	result := make(map[string]struct{}, len(r.tools))
+	maps.Copy(result, r.tools)
+	return result
 }
 
 // waitForRootCount waits until the server has exactly count loaded roots.

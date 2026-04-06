@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -791,5 +792,145 @@ func TestSyncTools_DiscardsOnGenerationMismatch(t *testing.T) {
 	// timing, but must not panic.
 	if err := s.syncTools(); err != nil {
 		t.Fatalf("syncTools: %v", err)
+	}
+}
+
+// blockingRegistry wraps a trackingRegistry and blocks on AddTool when
+// the gate channel is non-nil. This lets tests pause one syncTools
+// mid-Phase-3 to force a deterministic interleaving.
+type blockingRegistry struct {
+	*trackingRegistry
+	gate chan struct{} // if non-nil, AddTool blocks until closed
+}
+
+func (r *blockingRegistry) AddTool(tool *mcp.Tool, handler mcp.ToolHandler) {
+	if r.gate != nil {
+		<-r.gate
+	}
+	r.trackingRegistry.AddTool(tool, handler)
+}
+
+func TestSyncTools_OrphanedToolOnConcurrentSync(t *testing.T) {
+	// Single root with two tasks. We'll remove one task mid-sync to
+	// create the orphan scenario without multi-root prefix complications.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  taskA:\n    desc: Task A\n    cmds:\n      - echo A\n  taskB:\n    desc: Task B\n    cmds:\n      - echo B\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	root, err := loadRoot(t.Context(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mcpSrv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
+	tracker := newTrackingRegistry(mcpSrv)
+	gate := make(chan struct{})
+	blocking := &blockingRegistry{trackingRegistry: tracker, gate: gate}
+
+	uri := dirToURI(dir)
+	s := &Server{
+		roots:           map[string]*Root{uri: root},
+		mcpServer:       mcpSrv,
+		toolRegistry:    blocking,
+		registeredTools: make(map[string]mcp.Tool),
+	}
+
+	// Initial sync (gate open via nil).
+	blocking.gate = nil
+	if err := s.syncTools(); err != nil {
+		t.Fatalf("initial syncTools: %v", err)
+	}
+
+	// Verify both tools registered.
+	if _, ok := tracker.toolSet()["taskA"]; !ok {
+		t.Fatal("expected taskA in tracker after initial sync")
+	}
+	if _, ok := tracker.toolSet()["taskB"]; !ok {
+		t.Fatal("expected taskB in tracker after initial sync")
+	}
+
+	// Now set up the race:
+	// 1. Goroutine 1 (stale sync): snapshots gen=N with both tasks,
+	//    plans {taskA, taskB}, then blocks in Phase 3 on AddTool.
+	// 2. Main thread: while G1 is blocked, swap to a single-task root,
+	//    bump gen, run a full sync that produces {taskA} only.
+	// 3. Unblock G1: it finishes AddTool(taskB) on the MCP server,
+	//    reaches Phase 4, sees gen mismatch, discards bookkeeping.
+	// Result: tracker has {taskA, taskB} but registeredTools has {taskA}.
+
+	// Reset registeredTools so the next sync will re-add via AddTool.
+	s.mu.Lock()
+	s.registeredTools = make(map[string]mcp.Tool)
+	s.generation++
+	s.mu.Unlock()
+
+	// Reset tracker and MCP server to match.
+	tracker.mu.Lock()
+	tracker.tools = make(map[string]struct{})
+	tracker.mu.Unlock()
+	mcpSrv.RemoveTools("taskA", "taskB")
+
+	// Arm the gate so G1's AddTool calls will block.
+	blocking.gate = gate
+
+	g1done := make(chan struct{})
+	go func() {
+		defer close(g1done)
+		_ = s.syncTools()
+	}()
+
+	// Give G1 time to enter Phase 3 and block on AddTool.
+	time.Sleep(50 * time.Millisecond)
+
+	// While G1 is blocked: replace root with a single-task Taskfile.
+	singleTaskDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(singleTaskDir, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  taskA:\n    desc: Task A\n    cmds:\n      - echo A\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	newRoot, err := loadRoot(t.Context(), singleTaskDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s.mu.Lock()
+	newURI := dirToURI(singleTaskDir)
+	delete(s.roots, uri)
+	s.roots[newURI] = newRoot
+	s.generation++
+	s.mu.Unlock()
+
+	// G2 sync with gate disabled (it must not block).
+	blocking.gate = nil
+	if err := s.syncTools(); err != nil {
+		t.Fatalf("G2 syncTools: %v", err)
+	}
+
+	// Unblock G1.
+	close(gate)
+	<-g1done
+
+	// Now check: registeredTools should have {taskA} only.
+	s.mu.Lock()
+	regTools := make(map[string]mcp.Tool)
+	maps.Copy(regTools, s.registeredTools)
+	s.mu.Unlock()
+
+	if _, ok := regTools["taskB"]; ok {
+		t.Fatal("registeredTools contains taskB — bookkeeping is stale")
+	}
+	if _, ok := regTools["taskA"]; !ok {
+		t.Fatal("registeredTools missing taskA")
+	}
+
+	// The real assertion: the tracker (MCP-side state) should match
+	// registeredTools. If taskB is in the tracker but not in
+	// registeredTools, it's orphaned.
+	mcpTools := tracker.toolSet()
+	if _, ok := mcpTools["taskB"]; ok {
+		t.Fatal("MCP server has orphaned tool taskB: registered on MCP server but not tracked in registeredTools")
+	}
+	if _, ok := mcpTools["taskA"]; !ok {
+		t.Fatal("MCP server missing taskA")
 	}
 }
