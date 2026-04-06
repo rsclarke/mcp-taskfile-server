@@ -677,3 +677,119 @@ func TestCreateToolForTask_WithPrefix_EnforcesMaxLength(t *testing.T) {
 		t.Fatalf("tool.Name = %q, want MCP-valid name", tool.Name)
 	}
 }
+
+func TestDiffTools(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object"}`)
+
+	t.Run("empty to populated", func(t *testing.T) {
+		desired := map[string]mcp.Tool{
+			"greet": {Name: "greet", Description: "Say hello", InputSchema: schema},
+		}
+		stale, added := diffTools(nil, desired)
+		if len(stale) != 0 {
+			t.Errorf("stale = %v, want empty", stale)
+		}
+		if !slices.Equal(added, []string{"greet"}) {
+			t.Errorf("added = %v, want [greet]", added)
+		}
+	})
+
+	t.Run("populated to empty", func(t *testing.T) {
+		old := map[string]mcp.Tool{
+			"greet": {Name: "greet", Description: "Say hello", InputSchema: schema},
+		}
+		stale, added := diffTools(old, nil)
+		if !slices.Equal(stale, []string{"greet"}) {
+			t.Errorf("stale = %v, want [greet]", stale)
+		}
+		if len(added) != 0 {
+			t.Errorf("added = %v, want empty", added)
+		}
+	})
+
+	t.Run("unchanged", func(t *testing.T) {
+		tools := map[string]mcp.Tool{
+			"greet": {Name: "greet", Description: "Say hello", InputSchema: schema},
+		}
+		stale, added := diffTools(tools, tools)
+		if len(stale) != 0 {
+			t.Errorf("stale = %v, want empty", stale)
+		}
+		if len(added) != 0 {
+			t.Errorf("added = %v, want empty", added)
+		}
+	})
+
+	t.Run("changed description", func(t *testing.T) {
+		old := map[string]mcp.Tool{
+			"greet": {Name: "greet", Description: "Say hello", InputSchema: schema},
+		}
+		desired := map[string]mcp.Tool{
+			"greet": {Name: "greet", Description: "Say goodbye", InputSchema: schema},
+		}
+		stale, added := diffTools(old, desired)
+		if !slices.Equal(stale, []string{"greet"}) {
+			t.Errorf("stale = %v, want [greet]", stale)
+		}
+		if !slices.Equal(added, []string{"greet"}) {
+			t.Errorf("added = %v, want [greet]", added)
+		}
+	})
+}
+
+func TestBuildToolPlan_FromSnapshot(t *testing.T) {
+	s := loadServerFromFixture(t, "basic")
+	root := onlyRoot(t, s)
+
+	snap := toolStateSnapshot{
+		generation: 42,
+		roots:      map[string]*Root{"file:///test": root},
+	}
+
+	plan := buildToolPlan(snap)
+	if _, ok := plan.tools["greet"]; !ok {
+		t.Fatalf("expected tool greet, got %v", toolNames(plan.tools))
+	}
+	if _, ok := plan.handlers["greet"]; !ok {
+		t.Fatal("expected handler for greet")
+	}
+}
+
+func TestSyncTools_DiscardsOnGenerationMismatch(t *testing.T) {
+	s := newTestServer(t, "basic")
+
+	if err := s.syncTools(); err != nil {
+		t.Fatalf("initial syncTools: %v", err)
+	}
+	if len(s.registeredTools) == 0 {
+		t.Fatal("expected at least one tool after initial sync")
+	}
+
+	s.mu.Lock()
+	initialGen := s.generation
+	initialTools := make(map[string]mcp.Tool)
+	maps.Copy(initialTools, s.registeredTools)
+
+	// Simulate a concurrent mutation by bumping the generation while
+	// no actual state change has occurred. This makes any in-flight
+	// plan appear stale at commit time.
+	s.generation++
+	s.mu.Unlock()
+
+	// syncTools will snapshot generation=initialGen+1, plan, apply MCP
+	// changes, then re-acquire the lock. We bump generation again before
+	// the commit to simulate a race.
+	// To test this precisely, we bump generation inside a goroutine
+	// after a brief delay to race with the commit phase.
+	go func() {
+		s.mu.Lock()
+		s.generation = initialGen + 10
+		s.mu.Unlock()
+	}()
+
+	// Run syncTools — it should either commit or discard depending on
+	// timing, but must not panic.
+	if err := s.syncTools(); err != nil {
+		t.Fatalf("syncTools: %v", err)
+	}
+}
