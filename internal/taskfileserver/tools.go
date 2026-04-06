@@ -96,13 +96,6 @@ type toolPlan struct {
 	rootToolNames map[string][]string
 }
 
-// buildToolSet discovers all tasks across all roots and returns tool definitions
-// and handlers without mutating server or root registration state.
-func (s *Server) buildToolSet() (map[string]mcp.Tool, map[string]mcp.ToolHandler) {
-	plan := s.buildToolPlan()
-	return plan.tools, plan.handlers
-}
-
 // buildToolPlan computes the desired tool registration state without mutating
 // the server or roots.
 func (s *Server) buildToolPlan() toolPlan {

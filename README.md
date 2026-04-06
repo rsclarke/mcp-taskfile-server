@@ -160,7 +160,7 @@ To modify or extend the server:
 3. **Dynamic Discovery**: `buildToolPlan()` computes the desired tool state; `syncTools()` applies it to MCP registration and per-root bookkeeping
 4. **Tool Generation**: Each task becomes an MCP tool via `createToolForTask()`
 5. **Variable Extraction**: Task variables are automatically extracted for schema generation
-6. **Handler Creation**: Each task gets its own handler via `createTaskHandler()`
+6. **Handler Creation**: During tool planning, each task gets a per-call handler via `createTaskHandlerForWorkdir()`
 7. **Tool Sync**: `syncTools()` diffs and updates registered tools; `watchTaskfiles()` triggers reloads from the graph-derived Taskfile watch set
 8. **Native Execution**: Tasks are executed using `executor.Run()` from go-task library
 
@@ -173,7 +173,7 @@ To modify or extend the server:
 - **`loadTaskfileWatchSet()`**: Resolves the local Taskfile graph and derives the Taskfiles and parent directories to watch
 - **`buildToolPlan()`**: Computes the desired MCP tool set, handlers, and per-root registration state without mutating the server
 - **`createToolForTask()`**: Generates MCP tool schema from task definition
-- **`createTaskHandler()`**: Creates execution handler for each task
+- **`createTaskHandlerForWorkdir()`**: Creates per-call execution handlers bound to a root workdir
 - **`syncTools()`**: Diffs current tasks against registered tools and adds/removes as needed
 - **`watchTaskfiles()`**: Watches the graph-derived Taskfile set for changes with debounced reload
 

@@ -159,13 +159,3 @@ func (s *Server) reloadRoot(ctx context.Context, uri string) error {
 	root.watchTaskfiles = watchTaskfiles
 	return s.syncTools()
 }
-
-// loadAndRegisterTools re-creates the task executor from the single root
-// working directory and syncs the MCP tool set. This is a convenience
-// wrapper for the single-root case.
-func (s *Server) loadAndRegisterTools() error {
-	for uri := range s.roots {
-		return s.reloadRoot(context.Background(), uri)
-	}
-	return errors.New("no roots configured")
-}

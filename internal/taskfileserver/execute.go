@@ -12,12 +12,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// createTaskHandler creates a handler function for a specific task.
+// createTaskHandlerForWorkdir creates a handler function for a specific task.
 // For wildcard tasks, it reconstructs the full task name from the MATCH argument.
-func createTaskHandler(root *Root, taskName string) mcp.ToolHandler {
-	return createTaskHandlerForWorkdir(root.workdir, taskName)
-}
-
 func createTaskHandlerForWorkdir(workdir, taskName string) mcp.ToolHandler {
 	wildcard := isWildcardTask(taskName)
 	wildcardCount := countWildcards(taskName)

@@ -50,6 +50,18 @@ func onlyRoot(t *testing.T, s *Server) *Root {
 	return nil
 }
 
+// onlyRootURI returns the single root URI from a server, or fails the test.
+func onlyRootURI(t *testing.T, s *Server) string {
+	t.Helper()
+	if len(s.roots) != 1 {
+		t.Fatalf("expected 1 root, got %d", len(s.roots))
+	}
+	for uri := range s.roots {
+		return uri
+	}
+	return ""
+}
+
 // newTestServer creates a Server from a fixture with a real *mcp.Server attached.
 func newTestServer(t *testing.T, fixture string) *Server {
 	t.Helper()
@@ -178,10 +190,10 @@ func TestCreateToolForTask_OverrideVars(t *testing.T) {
 	}
 }
 
-func TestBuildToolSet_SkipsInternal(t *testing.T) {
+func TestBuildToolPlan_SkipsInternal(t *testing.T) {
 	s := loadServerFromFixture(t, "internal")
 
-	tools, _ := s.buildToolSet()
+	tools := s.buildToolPlan().tools
 
 	if len(tools) != 1 {
 		t.Fatalf("expected 1 tool, got %d", len(tools))
@@ -355,10 +367,10 @@ func TestCreateToolForTask_LeadingDot(t *testing.T) {
 	}
 }
 
-func TestBuildToolSet_Namespaced(t *testing.T) {
+func TestBuildToolPlan_Namespaced(t *testing.T) {
 	s := loadServerFromFixture(t, "namespaced")
 
-	tools, _ := s.buildToolSet()
+	tools := s.buildToolPlan().tools
 
 	for _, want := range []string{"db_migrate", "uv_run", "uv_run_dev_lint-imports"} {
 		if _, ok := tools[want]; !ok {
@@ -367,10 +379,10 @@ func TestBuildToolSet_Namespaced(t *testing.T) {
 	}
 }
 
-func TestBuildToolSet_Includes(t *testing.T) {
+func TestBuildToolPlan_Includes(t *testing.T) {
 	s := loadServerFromFixture(t, "includes")
 
-	tools, _ := s.buildToolSet()
+	tools := s.buildToolPlan().tools
 
 	for _, want := range []string{"build", "docs_serve", "docs_build"} {
 		if _, ok := tools[want]; !ok {
@@ -379,10 +391,10 @@ func TestBuildToolSet_Includes(t *testing.T) {
 	}
 }
 
-func TestBuildToolSet_Wildcard(t *testing.T) {
+func TestBuildToolPlan_Wildcard(t *testing.T) {
 	s := loadServerFromFixture(t, "wildcard")
 
-	tools, _ := s.buildToolSet()
+	tools := s.buildToolPlan().tools
 
 	for _, want := range []string{"start", "deploy"} {
 		if _, ok := tools[want]; !ok {
@@ -742,21 +754,6 @@ func TestMultiRoot_SingleRoot_NoPrefix(t *testing.T) {
 	// Single root: no prefix.
 	if _, ok := s.registeredTools["greet"]; !ok {
 		t.Errorf("expected unprefixed tool %q, got: %v", "greet", toolNames(s.registeredTools))
-	}
-}
-
-func TestLoadAndRegisterTools(t *testing.T) {
-	s := newTestServer(t, "basic")
-
-	if err := s.loadAndRegisterTools(); err != nil {
-		t.Fatalf("loadAndRegisterTools failed: %v", err)
-	}
-
-	if len(s.registeredTools) == 0 {
-		t.Fatal("expected at least one registered tool")
-	}
-	if _, ok := s.registeredTools["greet"]; !ok {
-		t.Errorf("expected tool %q, got tools: %v", "greet", toolNames(s.registeredTools))
 	}
 }
 
@@ -1177,9 +1174,10 @@ func schemaRequired(t *testing.T, tool *mcp.Tool) []string {
 	return result
 }
 
-func TestLoadAndRegisterTools_RemovesTask(t *testing.T) {
+func TestReloadRoot_RemovesTask(t *testing.T) {
 	initial := []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n  goodbye:\n    desc: Say goodbye\n    cmds:\n      - echo goodbye\n")
 	s := newTempServer(t, initial)
+	rootURI := onlyRootURI(t, s)
 
 	if _, ok := s.registeredTools["hello"]; !ok {
 		t.Fatal("expected initial tool 'hello'")
@@ -1194,8 +1192,8 @@ func TestLoadAndRegisterTools_RemovesTask(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := s.loadAndRegisterTools(); err != nil {
-		t.Fatalf("loadAndRegisterTools failed: %v", err)
+	if err := s.reloadRoot(t.Context(), rootURI); err != nil {
+		t.Fatalf("reloadRoot failed: %v", err)
 	}
 
 	if _, ok := s.registeredTools["goodbye"]; ok {
@@ -1206,9 +1204,10 @@ func TestLoadAndRegisterTools_RemovesTask(t *testing.T) {
 	}
 }
 
-func TestLoadAndRegisterTools_RemovesAllPublicTasks(t *testing.T) {
+func TestReloadRoot_RemovesAllPublicTasks(t *testing.T) {
 	initial := []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n")
 	s := newTempServer(t, initial)
+	rootURI := onlyRootURI(t, s)
 
 	if _, ok := s.registeredTools["hello"]; !ok {
 		t.Fatal("expected initial tool 'hello'")
@@ -1219,8 +1218,8 @@ func TestLoadAndRegisterTools_RemovesAllPublicTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := s.loadAndRegisterTools(); err != nil {
-		t.Fatalf("loadAndRegisterTools failed: %v", err)
+	if err := s.reloadRoot(t.Context(), rootURI); err != nil {
+		t.Fatalf("reloadRoot failed: %v", err)
 	}
 
 	if len(s.registeredTools) != 0 {
@@ -1231,9 +1230,10 @@ func TestLoadAndRegisterTools_RemovesAllPublicTasks(t *testing.T) {
 	}
 }
 
-func TestLoadAndRegisterTools_UpdatesChangedTask(t *testing.T) {
+func TestReloadRoot_UpdatesChangedTask(t *testing.T) {
 	initial := []byte("version: '3'\ntasks:\n  greet:\n    desc: Say hello\n    cmds:\n      - echo hello\n")
 	s := newTempServer(t, initial)
+	rootURI := onlyRootURI(t, s)
 
 	origTool := s.registeredTools["greet"]
 	if origTool.Description != "Say hello" {
@@ -1246,8 +1246,8 @@ func TestLoadAndRegisterTools_UpdatesChangedTask(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := s.loadAndRegisterTools(); err != nil {
-		t.Fatalf("loadAndRegisterTools failed: %v", err)
+	if err := s.reloadRoot(t.Context(), rootURI); err != nil {
+		t.Fatalf("reloadRoot failed: %v", err)
 	}
 
 	updatedTool, ok := s.registeredTools["greet"]
@@ -1758,11 +1758,11 @@ func TestHandleInitialized_FallbackToWorkdir(t *testing.T) {
 	}
 }
 
-func TestCreateTaskHandler_Success(t *testing.T) {
+func TestCreateTaskHandlerForWorkdir_Success(t *testing.T) {
 	s := loadServerFromFixture(t, "basic")
 	root := onlyRoot(t, s)
 
-	handler := createTaskHandler(root, "greet")
+	handler := createTaskHandlerForWorkdir(root.workdir, "greet")
 	result, err := handler(t.Context(), &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{Name: "greet"},
 	})
@@ -1782,18 +1782,13 @@ func TestCreateTaskHandler_Success(t *testing.T) {
 	}
 }
 
-func TestCreateTaskHandler_TaskFailure(t *testing.T) {
+func TestCreateTaskHandlerForWorkdir_TaskFailure(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  fail:\n    desc: A failing task\n    cmds:\n      - exit 1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	root, err := loadRoot(t.Context(), dir)
-	if err != nil {
-		t.Fatalf("loadRoot: %v", err)
-	}
-
-	handler := createTaskHandler(root, "fail")
+	handler := createTaskHandlerForWorkdir(dir, "fail")
 	result, handlerErr := handler(t.Context(), &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{Name: "fail"},
 	})
@@ -1810,18 +1805,13 @@ func TestCreateTaskHandler_TaskFailure(t *testing.T) {
 	}
 }
 
-func TestCreateTaskHandler_WithVariables(t *testing.T) {
+func TestCreateTaskHandlerForWorkdir_WithVariables(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  greet:\n    desc: Greet someone\n    cmds:\n      - echo hello {{.NAME}}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	root, err := loadRoot(t.Context(), dir)
-	if err != nil {
-		t.Fatalf("loadRoot: %v", err)
-	}
-
-	handler := createTaskHandler(root, "greet")
+	handler := createTaskHandlerForWorkdir(dir, "greet")
 	args := json.RawMessage(`{"NAME":"world"}`)
 	result, handlerErr := handler(t.Context(), &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{
@@ -1842,11 +1832,11 @@ func TestCreateTaskHandler_WithVariables(t *testing.T) {
 	}
 }
 
-func TestCreateTaskHandler_WildcardMATCH(t *testing.T) {
+func TestCreateTaskHandlerForWorkdir_WildcardMATCH(t *testing.T) {
 	s := loadServerFromFixture(t, "wildcard")
 	root := onlyRoot(t, s)
 
-	handler := createTaskHandler(root, "start:*")
+	handler := createTaskHandlerForWorkdir(root.workdir, "start:*")
 	args := json.RawMessage(`{"MATCH":"web"}`)
 	result, err := handler(t.Context(), &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{
@@ -1868,11 +1858,11 @@ func TestCreateTaskHandler_WildcardMATCH(t *testing.T) {
 	}
 }
 
-func TestCreateTaskHandler_WildcardMissingMATCH(t *testing.T) {
+func TestCreateTaskHandlerForWorkdir_WildcardMissingMATCH(t *testing.T) {
 	s := loadServerFromFixture(t, "wildcard")
 	root := onlyRoot(t, s)
 
-	handler := createTaskHandler(root, "start:*")
+	handler := createTaskHandlerForWorkdir(root.workdir, "start:*")
 	result, err := handler(t.Context(), &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{Name: "start"},
 	})
@@ -1889,11 +1879,11 @@ func TestCreateTaskHandler_WildcardMissingMATCH(t *testing.T) {
 	}
 }
 
-func TestCreateTaskHandler_WildcardWrongCount(t *testing.T) {
+func TestCreateTaskHandlerForWorkdir_WildcardWrongCount(t *testing.T) {
 	s := loadServerFromFixture(t, "wildcard")
 	root := onlyRoot(t, s)
 
-	handler := createTaskHandler(root, "deploy:*:*")
+	handler := createTaskHandlerForWorkdir(root.workdir, "deploy:*:*")
 	args := json.RawMessage(`{"MATCH":"onlyone"}`)
 	result, err := handler(t.Context(), &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{
@@ -1914,11 +1904,11 @@ func TestCreateTaskHandler_WildcardWrongCount(t *testing.T) {
 	}
 }
 
-func TestCreateTaskHandler_WildcardMultiMATCH(t *testing.T) {
+func TestCreateTaskHandlerForWorkdir_WildcardMultiMATCH(t *testing.T) {
 	s := loadServerFromFixture(t, "wildcard")
 	root := onlyRoot(t, s)
 
-	handler := createTaskHandler(root, "deploy:*:*")
+	handler := createTaskHandlerForWorkdir(root.workdir, "deploy:*:*")
 	args := json.RawMessage(`{"MATCH":" api , production "}`)
 	result, err := handler(t.Context(), &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{
@@ -1940,11 +1930,11 @@ func TestCreateTaskHandler_WildcardMultiMATCH(t *testing.T) {
 	}
 }
 
-func TestCreateTaskHandler_WildcardTooManyValues(t *testing.T) {
+func TestCreateTaskHandlerForWorkdir_WildcardTooManyValues(t *testing.T) {
 	s := loadServerFromFixture(t, "wildcard")
 	root := onlyRoot(t, s)
 
-	handler := createTaskHandler(root, "deploy:*:*")
+	handler := createTaskHandlerForWorkdir(root.workdir, "deploy:*:*")
 	args := json.RawMessage(`{"MATCH":"api,production,extra"}`)
 	result, err := handler(t.Context(), &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{
@@ -1965,11 +1955,11 @@ func TestCreateTaskHandler_WildcardTooManyValues(t *testing.T) {
 	}
 }
 
-func TestCreateTaskHandler_WildcardEmptySegment(t *testing.T) {
+func TestCreateTaskHandlerForWorkdir_WildcardEmptySegment(t *testing.T) {
 	s := loadServerFromFixture(t, "wildcard")
 	root := onlyRoot(t, s)
 
-	handler := createTaskHandler(root, "deploy:*:*")
+	handler := createTaskHandlerForWorkdir(root.workdir, "deploy:*:*")
 	args := json.RawMessage(`{"MATCH":"api, "}`)
 	result, err := handler(t.Context(), &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{
@@ -1990,11 +1980,11 @@ func TestCreateTaskHandler_WildcardEmptySegment(t *testing.T) {
 	}
 }
 
-func TestCreateTaskHandler_InvalidArguments(t *testing.T) {
+func TestCreateTaskHandlerForWorkdir_InvalidArguments(t *testing.T) {
 	s := loadServerFromFixture(t, "basic")
 	root := onlyRoot(t, s)
 
-	handler := createTaskHandler(root, "greet")
+	handler := createTaskHandlerForWorkdir(root.workdir, "greet")
 	args := json.RawMessage(`{invalid json}`)
 	result, err := handler(t.Context(), &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{
@@ -2015,7 +2005,7 @@ func TestCreateTaskHandler_InvalidArguments(t *testing.T) {
 	}
 }
 
-func TestBuildToolSet_ExcludesCollidingToolNamesAcrossRoots(t *testing.T) {
+func TestBuildToolPlan_ExcludesCollidingToolNamesAcrossRoots(t *testing.T) {
 	// Create two dirs with the same basename ("dup") containing identically
 	// named tasks. With >1 root the prefix is derived from the basename,
 	// so both roots produce the same prefixed tool name and neither should be exposed.
@@ -2053,7 +2043,8 @@ func TestBuildToolSet_ExcludesCollidingToolNamesAcrossRoots(t *testing.T) {
 		},
 	}
 
-	tools, handlers := s.buildToolSet()
+	plan := s.buildToolPlan()
+	tools, handlers := plan.tools, plan.handlers
 
 	if _, ok := tools["dup_hello"]; ok {
 		t.Fatalf("expected colliding tool dup_hello to be excluded, got %v", toolNames(tools))
@@ -2067,14 +2058,14 @@ func TestBuildToolSet_ExcludesCollidingToolNamesAcrossRoots(t *testing.T) {
 		t.Fatalf("toolNames = %v, want %v", got, want)
 	}
 	if len(r1.registeredTools) != 0 {
-		t.Fatalf("expected buildToolSet to leave r1.registeredTools untouched, got %v", r1.registeredTools)
+		t.Fatalf("expected buildToolPlan to leave r1.registeredTools untouched, got %v", r1.registeredTools)
 	}
 	if len(r2.registeredTools) != 0 {
-		t.Fatalf("expected buildToolSet to leave r2.registeredTools untouched, got %v", r2.registeredTools)
+		t.Fatalf("expected buildToolPlan to leave r2.registeredTools untouched, got %v", r2.registeredTools)
 	}
 }
 
-func TestBuildToolSet_ExcludesCollidingToolNamesWithinRoot(t *testing.T) {
+func TestBuildToolPlan_ExcludesCollidingToolNamesWithinRoot(t *testing.T) {
 	dir := t.TempDir()
 	taskfile := []byte("version: '3'\ntasks:\n  build:dev:\n    desc: Build namespaced\n    cmds:\n      - echo namespaced\n  build_dev:\n    desc: Build underscored\n    cmds:\n      - echo underscored\n  lint:\n    desc: Lint\n    cmds:\n      - echo lint\n")
 	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), taskfile, 0o600); err != nil {
@@ -2090,7 +2081,8 @@ func TestBuildToolSet_ExcludesCollidingToolNamesWithinRoot(t *testing.T) {
 		roots: map[string]*Root{dirToURI(dir): root},
 	}
 
-	tools, handlers := s.buildToolSet()
+	plan := s.buildToolPlan()
+	tools, handlers := plan.tools, plan.handlers
 	if _, ok := tools["build_dev"]; ok {
 		t.Fatalf("expected colliding tool build_dev to be excluded, got %v", toolNames(tools))
 	}
@@ -2101,11 +2093,11 @@ func TestBuildToolSet_ExcludesCollidingToolNamesWithinRoot(t *testing.T) {
 		t.Fatalf("toolNames = %v, want [lint]", got)
 	}
 	if len(root.registeredTools) != 0 {
-		t.Fatalf("expected buildToolSet to leave root.registeredTools untouched, got %v", root.registeredTools)
+		t.Fatalf("expected buildToolPlan to leave root.registeredTools untouched, got %v", root.registeredTools)
 	}
 }
 
-func TestBuildToolSet_NoTasks(t *testing.T) {
+func TestBuildToolPlan_NoTasks(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  helper:\n    internal: true\n    cmds:\n      - echo hidden\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -2120,7 +2112,8 @@ func TestBuildToolSet_NoTasks(t *testing.T) {
 		roots: map[string]*Root{dirToURI(dir): root},
 	}
 
-	tools, handlers := s.buildToolSet()
+	plan := s.buildToolPlan()
+	tools, handlers := plan.tools, plan.handlers
 	if len(tools) != 0 {
 		t.Fatalf("expected no tools, got %v", toolNames(tools))
 	}
@@ -2128,7 +2121,7 @@ func TestBuildToolSet_NoTasks(t *testing.T) {
 		t.Fatalf("expected no handlers, got %d", len(handlers))
 	}
 	if len(root.registeredTools) != 0 {
-		t.Fatalf("expected buildToolSet to leave root.registeredTools untouched, got %v", root.registeredTools)
+		t.Fatalf("expected buildToolPlan to leave root.registeredTools untouched, got %v", root.registeredTools)
 	}
 }
 
