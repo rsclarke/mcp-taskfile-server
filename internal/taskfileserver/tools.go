@@ -176,31 +176,38 @@ func toolsEqual(a, b *mcp.Tool) bool {
 	return bytes.Equal(aSchema, bSchema)
 }
 
+// diffTools compares the old registered tool set against the desired set and
+// returns the names of tools to remove and tools to add (or re-add due to changes).
+func diffTools(old, desired map[string]mcp.Tool) (stale, added []string) {
+	for name, oldTool := range old {
+		if newTool, ok := desired[name]; !ok {
+			stale = append(stale, name)
+		} else if !toolsEqual(&oldTool, &newTool) {
+			stale = append(stale, name)
+		}
+	}
+	for name, newTool := range desired {
+		if oldTool, ok := old[name]; ok && toolsEqual(&oldTool, &newTool) {
+			continue
+		}
+		added = append(added, name)
+	}
+	return stale, added
+}
+
 // syncTools builds the current tool set, diffs it against previously
 // registered tools, and adds/removes tools on the MCP server as needed.
 func (s *Server) syncTools() error {
 	snap := toolStateSnapshot{roots: s.roots}
 	plan := buildToolPlan(snap)
 
-	// Remove tools that no longer exist or have changed
-	var stale []string
-	for name, old := range s.registeredTools {
-		if newTool, ok := plan.tools[name]; !ok {
-			stale = append(stale, name)
-		} else if !toolsEqual(&old, &newTool) {
-			stale = append(stale, name)
-		}
-	}
+	stale, added := diffTools(s.registeredTools, plan.tools)
+
 	if len(stale) > 0 {
 		s.mcpServer.RemoveTools(stale...)
 	}
-
-	// Add tools that are new or were removed above due to changes
-	for name, tool := range plan.tools {
-		if old, ok := s.registeredTools[name]; ok && toolsEqual(&old, &tool) {
-			continue
-		}
-		t := tool
+	for _, name := range added {
+		t := plan.tools[name]
 		s.mcpServer.AddTool(&t, plan.handlers[name])
 	}
 
