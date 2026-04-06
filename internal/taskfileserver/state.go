@@ -22,9 +22,30 @@ type Server struct {
 	mcpServer       *mcp.Server
 	registeredTools map[string]mcp.Tool
 	mu              sync.Mutex
+	generation      uint64
 	watchCancel     context.CancelFunc
 	watchDone       chan struct{}
 	shuttingDown    bool
+}
+
+// toolStateSnapshot captures the inputs needed by buildToolPlan,
+// frozen at a specific generation.
+type toolStateSnapshot struct {
+	generation uint64
+	roots      map[string]*Root
+}
+
+// snapshotToolStateLocked returns a snapshot of the current tool-relevant
+// server state. The caller must hold s.mu.
+func (s *Server) snapshotToolStateLocked() toolStateSnapshot {
+	snap := toolStateSnapshot{
+		generation: s.generation,
+		roots:      make(map[string]*Root, len(s.roots)),
+	}
+	for uri, root := range s.roots {
+		snap.roots[uri] = root
+	}
+	return snap
 }
 
 // rootSnapshot is a canonical root URI captured under lock for use by
