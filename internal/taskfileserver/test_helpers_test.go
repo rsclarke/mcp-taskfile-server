@@ -60,7 +60,9 @@ func onlyRootURI(t *testing.T, s *Server) string {
 func newTestServer(t *testing.T, fixture string) *Server {
 	t.Helper()
 	s := loadServerFromFixture(t, fixture)
-	s.mcpServer = mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
+	mcpSrv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
+	s.mcpServer = mcpSrv
+	s.toolRegistry = mcpSrv
 	s.registeredTools = make(map[string]mcp.Tool)
 	return s
 }
@@ -145,9 +147,11 @@ func newServerForDir(t *testing.T, dir string) *Server {
 		t.Fatalf("loadRoot: %v", err)
 	}
 	uri := dirToURI(dir)
+	mcpSrv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
 	s := &Server{
 		roots:           map[string]*Root{uri: root},
-		mcpServer:       mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil),
+		mcpServer:       mcpSrv,
+		toolRegistry:    mcpSrv,
 		registeredTools: make(map[string]mcp.Tool),
 	}
 	if err := s.syncTools(); err != nil {

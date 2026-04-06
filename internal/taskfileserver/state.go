@@ -17,10 +17,17 @@ type Root struct {
 	watchTaskfiles map[string]struct{}
 }
 
+// toolRegistry is the subset of *mcp.Server used for tool registration.
+type toolRegistry interface {
+	AddTool(tool *mcp.Tool, handler mcp.ToolHandler)
+	RemoveTools(names ...string)
+}
+
 // Server represents our MCP server for Taskfile.yml.
 type Server struct {
 	roots           map[string]*Root
 	mcpServer       *mcp.Server
+	toolRegistry    toolRegistry
 	registeredTools map[string]mcp.Tool
 	mu              sync.Mutex
 	generation      uint64

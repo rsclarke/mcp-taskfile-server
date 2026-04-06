@@ -31,6 +31,7 @@ func TestHandleInitialized_WithRoots(t *testing.T) {
 		RootsListChangedHandler: ts.HandleRootsChanged,
 	})
 	ts.mcpServer = server
+	ts.toolRegistry = server
 	ts.registeredTools = make(map[string]mcp.Tool)
 
 	ct, st := mcp.NewInMemoryTransports()
@@ -98,6 +99,7 @@ func TestHandleInitialized_CallToolExecutesSingleRootTool(t *testing.T) {
 		RootsListChangedHandler: ts.HandleRootsChanged,
 	})
 	ts.mcpServer = server
+	ts.toolRegistry = server
 	ts.registeredTools = make(map[string]mcp.Tool)
 
 	ct, st := mcp.NewInMemoryTransports()
@@ -152,6 +154,7 @@ func TestHandleInitialized_DeduplicatesEquivalentRootURIs(t *testing.T) {
 		RootsListChangedHandler: ts.HandleRootsChanged,
 	})
 	ts.mcpServer = server
+	ts.toolRegistry = server
 	ts.registeredTools = make(map[string]mcp.Tool)
 
 	ct, st := mcp.NewInMemoryTransports()
@@ -213,6 +216,7 @@ func TestHandleRootsChanged_AddAndRemove(t *testing.T) {
 		RootsListChangedHandler: ts.HandleRootsChanged,
 	})
 	ts.mcpServer = server
+	ts.toolRegistry = server
 	ts.registeredTools = make(map[string]mcp.Tool)
 
 	ct, st := mcp.NewInMemoryTransports()
@@ -279,6 +283,7 @@ func TestHandleRootsChanged_EquivalentURIAliasKeepsSingleRoot(t *testing.T) {
 		RootsListChangedHandler: ts.HandleRootsChanged,
 	})
 	ts.mcpServer = server
+	ts.toolRegistry = server
 	ts.registeredTools = make(map[string]mcp.Tool)
 
 	ct, st := mcp.NewInMemoryTransports()
@@ -365,6 +370,7 @@ func TestHandleInitialized_NoPublicTasks(t *testing.T) {
 		RootsListChangedHandler: ts.HandleRootsChanged,
 	})
 	ts.mcpServer = server
+	ts.toolRegistry = server
 	ts.registeredTools = make(map[string]mcp.Tool)
 
 	ct, st := mcp.NewInMemoryTransports()
@@ -419,6 +425,7 @@ func TestHandleRootsChanged_TransitionToUnprefixed(t *testing.T) {
 		RootsListChangedHandler: ts.HandleRootsChanged,
 	})
 	ts.mcpServer = server
+	ts.toolRegistry = server
 	ts.registeredTools = make(map[string]mcp.Tool)
 
 	ct, st := mcp.NewInMemoryTransports()
@@ -487,6 +494,7 @@ func TestHandleRootsChanged_TransitionToUnprefixedCallTool(t *testing.T) {
 		RootsListChangedHandler: ts.HandleRootsChanged,
 	})
 	ts.mcpServer = server
+	ts.toolRegistry = server
 	ts.registeredTools = make(map[string]mcp.Tool)
 
 	ct, st := mcp.NewInMemoryTransports()
@@ -547,6 +555,7 @@ func TestHandleRootsChanged_RemoveLastRootClearsTools(t *testing.T) {
 		RootsListChangedHandler: ts.HandleRootsChanged,
 	})
 	ts.mcpServer = server
+	ts.toolRegistry = server
 	ts.registeredTools = make(map[string]mcp.Tool)
 
 	ct, st := mcp.NewInMemoryTransports()
@@ -609,6 +618,7 @@ func TestToolListChangedNotification_OnFileChange(t *testing.T) {
 		RootsListChangedHandler: ts.HandleRootsChanged,
 	})
 	ts.mcpServer = server
+	ts.toolRegistry = server
 	ts.registeredTools = make(map[string]mcp.Tool)
 
 	ct, st := mcp.NewInMemoryTransports()

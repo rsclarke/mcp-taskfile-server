@@ -214,11 +214,11 @@ func (s *Server) syncTools() error {
 
 	// Phase 3: apply MCP side effects — no lock held.
 	if len(stale) > 0 {
-		s.mcpServer.RemoveTools(stale...)
+		s.toolRegistry.RemoveTools(stale...)
 	}
 	for _, name := range added {
 		t := plan.tools[name]
-		s.mcpServer.AddTool(&t, plan.handlers[name])
+		s.toolRegistry.AddTool(&t, plan.handlers[name])
 	}
 
 	// Phase 4: commit bookkeeping under lock with generation check.

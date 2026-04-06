@@ -22,6 +22,7 @@ func New() *Server {
 // SetMCPServer attaches the live MCP server instance used for tool updates.
 func (s *Server) SetMCPServer(server *mcp.Server) {
 	s.mcpServer = server
+	s.toolRegistry = server
 }
 
 // isMethodNotFound reports whether err is a JSON-RPC "method not found" error,
