@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 
 	"github.com/go-task/task/v3"
+	"github.com/go-task/task/v3/taskfile"
 )
 
 // dirToURI converts an absolute directory path to a file:// URI.
@@ -109,6 +111,35 @@ func loadRoot(ctx context.Context, dir string) (*Root, error) {
 		taskfile:       executor.Taskfile,
 		workdir:        abs,
 		watchDirs:      watchDirs,
+		watchTaskfiles: watchTaskfiles,
+	}, nil
+}
+
+// newUnloadedRoot creates a root placeholder for a workspace that does not yet
+// have a loadable root Taskfile. Watching the root directory lets us pick up a
+// Taskfile that is created or fixed after startup.
+func newUnloadedRoot(dir string) (*Root, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve path: %w", err)
+	}
+
+	info, err := os.Stat(abs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat root %s: %w", abs, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("root %s is not a directory", abs)
+	}
+
+	watchTaskfiles := make(map[string]struct{}, len(taskfile.DefaultTaskfiles))
+	for _, filename := range taskfile.DefaultTaskfiles {
+		watchTaskfiles[filepath.Join(abs, filename)] = struct{}{}
+	}
+
+	return &Root{
+		workdir:        abs,
+		watchDirs:      []string{abs},
 		watchTaskfiles: watchTaskfiles,
 	}, nil
 }

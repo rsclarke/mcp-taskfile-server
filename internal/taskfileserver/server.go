@@ -66,7 +66,11 @@ func (s *Server) reconcileRoots(ctx context.Context, roots []*mcp.Root, opts roo
 		root, loadErr := loadRoot(ctx, dir)
 		if loadErr != nil {
 			log.Printf("failed to load root %q: %v", r.URI, loadErr)
-			continue
+			root, loadErr = newUnloadedRoot(dir)
+			if loadErr != nil {
+				log.Printf("failed to watch unloaded root %q: %v", r.URI, loadErr)
+				continue
+			}
 		}
 		loadedRoots[canonicalURI] = root
 	}
