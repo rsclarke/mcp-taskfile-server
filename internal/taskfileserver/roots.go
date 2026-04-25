@@ -90,13 +90,14 @@ func loadRoot(ctx context.Context, dir string) (*Root, error) {
 		return nil, fmt.Errorf("failed to resolve path: %w", err)
 	}
 
-	watchTaskfiles, watchDirs, err := loadTaskfileWatchSet(ctx, abs)
+	entrypoint, watchTaskfiles, watchDirs, err := loadTaskfileWatchSet(ctx, abs)
 	if err != nil {
 		return nil, err
 	}
 
 	executor := task.NewExecutor(
 		task.WithDir(abs),
+		task.WithEntrypoint(entrypoint),
 		task.WithSilent(true),
 	)
 
@@ -137,7 +138,7 @@ func (s *Server) reloadRoot(ctx context.Context, uri string) error {
 	workdir := root.workdir
 	s.mu.Unlock()
 
-	watchTaskfiles, watchDirs, err := loadTaskfileWatchSet(ctx, workdir)
+	entrypoint, watchTaskfiles, watchDirs, err := loadTaskfileWatchSet(ctx, workdir)
 	if err != nil {
 		s.mu.Lock()
 		s.disableRootToolsLocked(root)
@@ -151,6 +152,7 @@ func (s *Server) reloadRoot(ctx context.Context, uri string) error {
 
 	executor := task.NewExecutor(
 		task.WithDir(workdir),
+		task.WithEntrypoint(entrypoint),
 		task.WithSilent(true),
 	)
 	if err := executor.Setup(); err != nil {

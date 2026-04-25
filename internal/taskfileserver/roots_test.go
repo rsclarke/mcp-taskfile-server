@@ -149,6 +149,22 @@ func TestCanonicalRootURI(t *testing.T) {
 	}
 }
 
+func TestLoadRoot_DoesNotWalkParentDirectories(t *testing.T) {
+	parent := t.TempDir()
+	if err := os.WriteFile(filepath.Join(parent, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  parent:\n    cmds:\n      - echo parent\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	child := filepath.Join(parent, "child")
+	if err := os.Mkdir(child, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := loadRoot(t.Context(), child); err == nil {
+		t.Fatal("expected loadRoot to fail when the root has no direct Taskfile")
+	}
+}
+
 func TestTaskfileLocationToPath_FileURI(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "taskfile with #hash")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
