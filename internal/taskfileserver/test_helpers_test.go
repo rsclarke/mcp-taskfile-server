@@ -287,6 +287,22 @@ func waitForToolCount(t *testing.T, ts *Server, count int) {
 	}
 }
 
+func testRoots(uris ...string) []*mcp.Root {
+	roots := make([]*mcp.Root, 0, len(uris))
+	for _, uri := range uris {
+		roots = append(roots, &mcp.Root{URI: uri})
+	}
+	return roots
+}
+
+// noopRegistry satisfies toolRegistry for tests that only care about the
+// server's in-memory tool bookkeeping, not MCP transport side effects.
+type noopRegistry struct{}
+
+func (noopRegistry) AddTool(_ *mcp.Tool, _ mcp.ToolHandler) {}
+
+func (noopRegistry) RemoveTools(_ ...string) {}
+
 // trackingRegistry wraps a toolRegistry and tracks the net set of tools
 // currently registered, providing an observable view of MCP-side state.
 type trackingRegistry struct {

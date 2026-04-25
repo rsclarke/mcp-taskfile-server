@@ -576,6 +576,61 @@ func TestWatchTaskfiles_DeletedRootTaskfileRemovesToolsUntilRestored(t *testing.
 	}
 }
 
+func TestReconcileRoots_MissingInitialTaskfileLoadsWhenCreatedLater(t *testing.T) {
+	dir := t.TempDir()
+	uri := dirToURI(dir)
+	s := New()
+	s.toolRegistry = noopRegistry{}
+	defer s.Shutdown()
+
+	if err := s.reconcileRoots(t.Context(), testRoots(uri), rootReconcileOptions{requireNonEmpty: true}); err != nil {
+		t.Fatalf("reconcileRoots: %v", err)
+	}
+
+	root := onlyRoot(t, s)
+	if root.taskfile != nil {
+		t.Fatal("expected root to be tracked without a loaded Taskfile")
+	}
+	if !slices.Equal(root.watchDirs, []string{dir}) {
+		t.Fatalf("watchDirs = %v, want [%s]", root.watchDirs, dir)
+	}
+	for _, filename := range []string{"Taskfile.yml", "Taskfile.yaml", "Taskfile.dist.yml", "Taskfile.dist.yaml"} {
+		if _, ok := root.watchTaskfiles[filepath.Join(dir, filename)]; !ok {
+			t.Fatalf("expected %s to be watched", filename)
+		}
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	taskfilePath := filepath.Join(dir, "Taskfile.yml")
+	content := []byte("version: '3'\ntasks:\n  hello:\n    desc: Added after startup\n    cmds:\n      - echo hello\n")
+	if err := os.WriteFile(taskfilePath, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.After(2 * time.Second)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-deadline:
+			s.mu.Lock()
+			tool := s.registeredTools["hello"]
+			s.mu.Unlock()
+			t.Fatalf("timed out waiting for created root Taskfile reload; last tool state: %+v", tool)
+		case <-ticker.C:
+			s.mu.Lock()
+			tool, ok := s.registeredTools["hello"]
+			loadedRoot := s.roots[uri]
+			s.mu.Unlock()
+			if ok && tool.Description == "Added after startup" && loadedRoot != nil && loadedRoot.taskfile != nil {
+				return
+			}
+		}
+	}
+}
+
 func TestReloadRoot_UnknownURI(t *testing.T) {
 	s := newTestServer(t, "basic")
 
