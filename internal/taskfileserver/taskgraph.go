@@ -110,9 +110,3 @@ func sortedKeys(values map[string]struct{}) []string {
 	slices.Sort(keys)
 	return keys
 }
-
-// isTaskfile reports whether the given path's basename matches one of the
-// supported Taskfile filenames from taskfile.DefaultTaskfiles.
-func isTaskfile(path string) bool {
-	return slices.Contains(taskfile.DefaultTaskfiles, filepath.Base(path))
-}
