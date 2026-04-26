@@ -25,7 +25,6 @@ type toolRegistry interface {
 // Server represents our MCP server for Taskfile.yml.
 type Server struct {
 	roots           map[string]*Root
-	mcpServer       *mcp.Server
 	toolRegistry    toolRegistry
 	registeredTools map[string]mcp.Tool
 	mu              sync.Mutex
@@ -66,12 +65,6 @@ func (s *Server) snapshotToolStateLocked() toolStateSnapshot {
 		}
 	}
 	return snap
-}
-
-// rootSnapshot is a canonical root URI captured under lock for use by
-// watchTaskfiles without holding the mutex.
-type rootSnapshot struct {
-	uri string
 }
 
 // cloneStringSet returns a shallow copy of a string set.

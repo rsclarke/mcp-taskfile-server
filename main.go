@@ -35,7 +35,7 @@ func run() error {
 			RootsListChangedHandler: taskfileServer.HandleRootsChanged,
 		},
 	)
-	taskfileServer.SetMCPServer(mcpServer)
+	taskfileServer.SetToolRegistry(mcpServer)
 
 	// Start the stdio server
 	if err := mcpServer.Run(ctx, &mcp.StdioTransport{}); err != nil {

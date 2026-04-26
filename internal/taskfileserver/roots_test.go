@@ -46,16 +46,16 @@ func TestDirToURI(t *testing.T) {
 		t.Fatalf("dirToURI(%q) returned unescaped URI %q", dir, uri)
 	}
 
-	roundTrip, err := uriToDir(uri)
+	roundTrip, err := fileURIToPath(uri)
 	if err != nil {
-		t.Fatalf("uriToDir(%q) failed: %v", uri, err)
+		t.Fatalf("fileURIToPath(%q) failed: %v", uri, err)
 	}
 	if roundTrip != filepath.Clean(dir) {
 		t.Errorf("uri round-trip = %q, want %q", roundTrip, filepath.Clean(dir))
 	}
 }
 
-func TestURIToDir(t *testing.T) {
+func TestFileURIToPath(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "path with #hash and ?query")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
@@ -95,21 +95,21 @@ func TestURIToDir(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := uriToDir(tt.uri)
+			got, err := fileURIToPath(tt.uri)
 			if tt.wantErr != "" {
 				if err == nil {
-					t.Fatalf("uriToDir(%q) = %q, want error containing %q", tt.uri, got, tt.wantErr)
+					t.Fatalf("fileURIToPath(%q) = %q, want error containing %q", tt.uri, got, tt.wantErr)
 				}
 				if !strings.Contains(err.Error(), tt.wantErr) {
-					t.Fatalf("uriToDir(%q) error = %q, want substring %q", tt.uri, err, tt.wantErr)
+					t.Fatalf("fileURIToPath(%q) error = %q, want substring %q", tt.uri, err, tt.wantErr)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("uriToDir(%q) failed: %v", tt.uri, err)
+				t.Fatalf("fileURIToPath(%q) failed: %v", tt.uri, err)
 			}
 			if got != tt.want {
-				t.Fatalf("uriToDir(%q) = %q, want %q", tt.uri, got, tt.want)
+				t.Fatalf("fileURIToPath(%q) = %q, want %q", tt.uri, got, tt.want)
 			}
 		})
 	}

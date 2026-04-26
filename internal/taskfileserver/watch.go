@@ -129,16 +129,16 @@ func (s *Server) watchRootTaskfiles(ctx context.Context, uri string) error {
 	}
 }
 
-// watchTaskfiles starts file watchers for the given roots and blocks until the
-// context is cancelled. The caller must provide a snapshot captured under lock.
-func (s *Server) watchTaskfiles(ctx context.Context, roots []rootSnapshot) error {
+// watchTaskfiles starts file watchers for the given root URIs and blocks until
+// the context is cancelled. The caller must provide URIs captured under lock.
+func (s *Server) watchTaskfiles(ctx context.Context, rootURIs []string) error {
 	var wg sync.WaitGroup
 	var firstErr error
 	var errOnce sync.Once
 
-	for _, rs := range roots {
+	for _, uri := range rootURIs {
 		wg.Go(func() {
-			if err := s.watchRootTaskfiles(ctx, rs.uri); err != nil {
+			if err := s.watchRootTaskfiles(ctx, uri); err != nil {
 				errOnce.Do(func() { firstErr = err })
 			}
 		})
@@ -187,10 +187,10 @@ func (s *Server) restartWatchers(ctx context.Context) {
 	prevCancel := s.watchCancel
 	prevDone := s.watchDone
 
-	// Snapshot roots while we hold the lock.
-	snap := make([]rootSnapshot, 0, len(s.roots))
+	// Snapshot root URIs while we hold the lock.
+	rootURIs := make([]string, 0, len(s.roots))
 	for uri := range s.roots {
-		snap = append(snap, rootSnapshot{uri: uri})
+		rootURIs = append(rootURIs, uri)
 	}
 
 	// Prepare the new watcher generation before releasing the lock.
@@ -211,7 +211,7 @@ func (s *Server) restartWatchers(ctx context.Context) {
 
 	go func() {
 		defer close(done)
-		if err := s.watchTaskfiles(watchCtx, snap); err != nil {
+		if err := s.watchTaskfiles(watchCtx, rootURIs); err != nil {
 			log.Printf("file watcher failed: %v", err)
 		}
 	}()

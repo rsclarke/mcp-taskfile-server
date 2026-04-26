@@ -23,17 +23,12 @@ func dirToURI(dir string) string {
 	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}).String()
 }
 
-// uriToDir converts a file:// URI back to a local directory path.
-func uriToDir(uri string) (string, error) {
-	return fileURIToPath(uri)
-}
-
 // canonicalRootURI resolves a client-provided local file URI to the canonical
 // absolute file URI we use as the server's internal root identity. Equivalent
 // aliases such as file:///repo and file://localhost/repo collapse to the same
 // canonical URI and directory.
 func canonicalRootURI(raw string) (string, string, error) {
-	dir, err := uriToDir(raw)
+	dir, err := fileURIToPath(raw)
 	if err != nil {
 		return "", "", err
 	}

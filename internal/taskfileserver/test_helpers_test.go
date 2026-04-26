@@ -62,7 +62,6 @@ func newTestServer(t *testing.T, fixture string) *Server {
 	t.Helper()
 	s := loadServerFromFixture(t, fixture)
 	mcpSrv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
-	s.mcpServer = mcpSrv
 	s.toolRegistry = mcpSrv
 	s.registeredTools = make(map[string]mcp.Tool)
 	return s
@@ -127,13 +126,13 @@ func snapshotFromServer(s *Server) toolStateSnapshot {
 	return snap
 }
 
-// snapshotRoots returns a rootSnapshot slice for use with watchTaskfiles.
-func snapshotRoots(s *Server) []rootSnapshot {
-	snap := make([]rootSnapshot, 0, len(s.roots))
+// snapshotRoots returns a slice of root URIs for use with watchTaskfiles.
+func snapshotRoots(s *Server) []string {
+	uris := make([]string, 0, len(s.roots))
 	for uri := range s.roots {
-		snap = append(snap, rootSnapshot{uri: uri})
+		uris = append(uris, uri)
 	}
-	return snap
+	return uris
 }
 
 // newTempServer creates a Server backed by a temp directory containing
@@ -159,7 +158,6 @@ func newServerForDir(t *testing.T, dir string) *Server {
 	mcpSrv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
 	s := &Server{
 		roots:           map[string]*Root{uri: root},
-		mcpServer:       mcpSrv,
 		toolRegistry:    mcpSrv,
 		registeredTools: make(map[string]mcp.Tool),
 	}

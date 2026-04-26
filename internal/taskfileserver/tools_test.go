@@ -817,7 +817,6 @@ func TestSyncTools_OrphanedToolOnConcurrentSync(t *testing.T) {
 	uri := dirToURI(dir)
 	s := &Server{
 		roots:           map[string]*Root{uri: root},
-		mcpServer:       mcpSrv,
 		toolRegistry:    tracker,
 		registeredTools: make(map[string]mcp.Tool),
 	}

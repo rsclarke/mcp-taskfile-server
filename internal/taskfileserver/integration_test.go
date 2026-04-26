@@ -30,7 +30,6 @@ func TestHandleInitialized_WithRoots(t *testing.T) {
 		InitializedHandler:      ts.HandleInitialized,
 		RootsListChangedHandler: ts.HandleRootsChanged,
 	})
-	ts.mcpServer = server
 	ts.toolRegistry = server
 	ts.registeredTools = make(map[string]mcp.Tool)
 
@@ -98,7 +97,6 @@ func TestHandleInitialized_CallToolExecutesSingleRootTool(t *testing.T) {
 		InitializedHandler:      ts.HandleInitialized,
 		RootsListChangedHandler: ts.HandleRootsChanged,
 	})
-	ts.mcpServer = server
 	ts.toolRegistry = server
 	ts.registeredTools = make(map[string]mcp.Tool)
 
@@ -153,7 +151,6 @@ func TestHandleInitialized_DeduplicatesEquivalentRootURIs(t *testing.T) {
 		InitializedHandler:      ts.HandleInitialized,
 		RootsListChangedHandler: ts.HandleRootsChanged,
 	})
-	ts.mcpServer = server
 	ts.toolRegistry = server
 	ts.registeredTools = make(map[string]mcp.Tool)
 
@@ -215,7 +212,6 @@ func TestHandleRootsChanged_AddAndRemove(t *testing.T) {
 		InitializedHandler:      ts.HandleInitialized,
 		RootsListChangedHandler: ts.HandleRootsChanged,
 	})
-	ts.mcpServer = server
 	ts.toolRegistry = server
 	ts.registeredTools = make(map[string]mcp.Tool)
 
@@ -282,7 +278,6 @@ func TestHandleRootsChanged_EquivalentURIAliasKeepsSingleRoot(t *testing.T) {
 		InitializedHandler:      ts.HandleInitialized,
 		RootsListChangedHandler: ts.HandleRootsChanged,
 	})
-	ts.mcpServer = server
 	ts.toolRegistry = server
 	ts.registeredTools = make(map[string]mcp.Tool)
 
@@ -369,7 +364,6 @@ func TestHandleInitialized_NoPublicTasks(t *testing.T) {
 		InitializedHandler:      ts.HandleInitialized,
 		RootsListChangedHandler: ts.HandleRootsChanged,
 	})
-	ts.mcpServer = server
 	ts.toolRegistry = server
 	ts.registeredTools = make(map[string]mcp.Tool)
 
@@ -424,7 +418,6 @@ func TestHandleRootsChanged_TransitionToUnprefixed(t *testing.T) {
 		InitializedHandler:      ts.HandleInitialized,
 		RootsListChangedHandler: ts.HandleRootsChanged,
 	})
-	ts.mcpServer = server
 	ts.toolRegistry = server
 	ts.registeredTools = make(map[string]mcp.Tool)
 
@@ -493,7 +486,6 @@ func TestHandleRootsChanged_TransitionToUnprefixedCallTool(t *testing.T) {
 		InitializedHandler:      ts.HandleInitialized,
 		RootsListChangedHandler: ts.HandleRootsChanged,
 	})
-	ts.mcpServer = server
 	ts.toolRegistry = server
 	ts.registeredTools = make(map[string]mcp.Tool)
 
@@ -554,7 +546,6 @@ func TestHandleRootsChanged_RemoveLastRootClearsTools(t *testing.T) {
 		InitializedHandler:      ts.HandleInitialized,
 		RootsListChangedHandler: ts.HandleRootsChanged,
 	})
-	ts.mcpServer = server
 	ts.toolRegistry = server
 	ts.registeredTools = make(map[string]mcp.Tool)
 
@@ -617,7 +608,6 @@ func TestToolListChangedNotification_OnFileChange(t *testing.T) {
 		InitializedHandler:      ts.HandleInitialized,
 		RootsListChangedHandler: ts.HandleRootsChanged,
 	})
-	ts.mcpServer = server
 	ts.toolRegistry = server
 	ts.registeredTools = make(map[string]mcp.Tool)
 
