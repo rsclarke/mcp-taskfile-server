@@ -80,6 +80,32 @@ func isWindowsDriveURIPath(path string) bool {
 	return (drive >= 'a' && drive <= 'z') || (drive >= 'A' && drive <= 'Z')
 }
 
+// buildRoot resolves the Taskfile graph for workdir, sets up a task
+// executor, and returns a fully populated *Root. workdir must already be
+// an absolute path.
+func buildRoot(ctx context.Context, workdir string) (*Root, error) {
+	entrypoint, watchTaskfiles, watchDirs, err := loadTaskfileWatchSet(ctx, workdir)
+	if err != nil {
+		return nil, err
+	}
+
+	executor := task.NewExecutor(
+		task.WithDir(workdir),
+		task.WithEntrypoint(entrypoint),
+		task.WithSilent(true),
+	)
+	if err := executor.Setup(); err != nil {
+		return nil, fmt.Errorf("failed to setup task executor for %s: %w", workdir, err)
+	}
+
+	return &Root{
+		taskfile:       executor.Taskfile,
+		workdir:        workdir,
+		watchDirs:      watchDirs,
+		watchTaskfiles: watchTaskfiles,
+	}, nil
+}
+
 // loadRoot creates a new Root by loading the Taskfile from the given directory.
 func loadRoot(ctx context.Context, dir string) (*Root, error) {
 	abs, err := filepath.Abs(dir)
@@ -87,27 +113,7 @@ func loadRoot(ctx context.Context, dir string) (*Root, error) {
 		return nil, fmt.Errorf("failed to resolve path: %w", err)
 	}
 
-	entrypoint, watchTaskfiles, watchDirs, err := loadTaskfileWatchSet(ctx, abs)
-	if err != nil {
-		return nil, err
-	}
-
-	executor := task.NewExecutor(
-		task.WithDir(abs),
-		task.WithEntrypoint(entrypoint),
-		task.WithSilent(true),
-	)
-
-	if err := executor.Setup(); err != nil {
-		return nil, fmt.Errorf("failed to setup task executor for %s: %w", abs, err)
-	}
-
-	return &Root{
-		taskfile:       executor.Taskfile,
-		workdir:        abs,
-		watchDirs:      watchDirs,
-		watchTaskfiles: watchTaskfiles,
-	}, nil
+	return buildRoot(ctx, abs)
 }
 
 // newUnloadedRoot creates a root placeholder for a workspace that does not yet
@@ -170,7 +176,7 @@ func (s *Server) reloadRoot(ctx context.Context, uri string) error {
 	workdir := root.workdir
 	s.mu.Unlock()
 
-	entrypoint, watchTaskfiles, watchDirs, err := loadTaskfileWatchSet(ctx, workdir)
+	newRoot, err := buildRoot(ctx, workdir)
 	if err != nil {
 		s.mu.Lock()
 		s.disableRootToolsLocked(uri, root)
@@ -182,29 +188,8 @@ func (s *Server) reloadRoot(ctx context.Context, uri string) error {
 		return fmt.Errorf("failed to reload root %s: %w", uri, err)
 	}
 
-	executor := task.NewExecutor(
-		task.WithDir(workdir),
-		task.WithEntrypoint(entrypoint),
-		task.WithSilent(true),
-	)
-	if err := executor.Setup(); err != nil {
-		s.mu.Lock()
-		s.disableRootToolsLocked(uri, root)
-		s.mu.Unlock()
-		syncErr := s.syncTools()
-		if syncErr != nil {
-			return fmt.Errorf("failed to setup task executor for %s: %w", workdir, errors.Join(err, fmt.Errorf("failed to clear stale tools: %w", syncErr)))
-		}
-		return fmt.Errorf("failed to setup task executor for %s: %w", workdir, err)
-	}
-
 	s.mu.Lock()
-	s.roots[uri] = &Root{
-		taskfile:       executor.Taskfile,
-		workdir:        workdir,
-		watchDirs:      watchDirs,
-		watchTaskfiles: watchTaskfiles,
-	}
+	s.roots[uri] = newRoot
 	s.generation++
 	s.mu.Unlock()
 
