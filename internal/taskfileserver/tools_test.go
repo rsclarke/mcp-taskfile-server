@@ -921,3 +921,30 @@ func TestSyncTools_OrphanedToolOnConcurrentSync(t *testing.T) {
 		t.Fatal("MCP server missing taskA")
 	}
 }
+
+// TestSnapshotToolState_IsolatedFromRootMutation verifies that a snapshot
+// captured by snapshotToolStateLocked observes the taskfile pointer that
+// was current at snapshot time, even if the underlying *Root is mutated
+// in-place afterwards (as reloadRoot and disableRootToolsLocked do).
+// Before snapshotting copied per-root fields by value, this test would
+// have observed a nil taskfile in the snapshot and panicked in the
+// planner.
+func TestSnapshotToolState_IsolatedFromRootMutation(t *testing.T) {
+	s := loadServerFromFixture(t, "basic")
+	root := onlyRoot(t, s)
+
+	s.mu.Lock()
+	snap := s.snapshotToolStateLocked()
+	// Simulate disableRootToolsLocked clearing the live root in place.
+	root.taskfile = nil
+	s.generation++
+	s.mu.Unlock()
+
+	// Planner must run safely against the snapshot, observing the
+	// taskfile that was current at snapshot time, not the now-nil
+	// field on the live root.
+	plan := buildToolPlan(snap)
+	if _, ok := plan.tools["greet"]; !ok {
+		t.Fatalf("expected snapshotted plan to retain greet, got %v", toolNames(plan.tools))
+	}
+}
