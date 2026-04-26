@@ -8,7 +8,11 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// Root holds the loaded per-root Taskfile data.
+// Root holds the loaded per-root Taskfile data. Once a *Root is published
+// into Server.roots its fields are treated as read-only; mutations are
+// performed by replacing the pointer in the map rather than writing
+// through the existing value, so concurrent readers (snapshots, watchers)
+// always observe a consistent state.
 type Root struct {
 	taskfile       *ast.Taskfile
 	workdir        string

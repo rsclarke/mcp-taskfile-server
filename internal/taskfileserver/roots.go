@@ -144,11 +144,17 @@ func (s *Server) unloadRoot(uri string) {
 	delete(s.roots, uri)
 }
 
-// disableRootToolsLocked clears the loaded Taskfile state for a root and
-// bumps the generation. The caller must hold s.mu. The actual MCP sync
-// is performed by the caller after releasing the lock.
-func (s *Server) disableRootToolsLocked(root *Root) {
-	root.taskfile = nil
+// disableRootToolsLocked replaces the root at uri with a fresh *Root that
+// preserves the workdir and watcher set but has no loaded Taskfile, then
+// bumps the generation. Replacing rather than mutating keeps Root values
+// reachable from prior snapshots effectively immutable. The caller must
+// hold s.mu and is responsible for running syncTools afterwards.
+func (s *Server) disableRootToolsLocked(uri string, root *Root) {
+	s.roots[uri] = &Root{
+		workdir:        root.workdir,
+		watchDirs:      root.watchDirs,
+		watchTaskfiles: root.watchTaskfiles,
+	}
 	s.generation++
 }
 
@@ -167,7 +173,7 @@ func (s *Server) reloadRoot(ctx context.Context, uri string) error {
 	entrypoint, watchTaskfiles, watchDirs, err := loadTaskfileWatchSet(ctx, workdir)
 	if err != nil {
 		s.mu.Lock()
-		s.disableRootToolsLocked(root)
+		s.disableRootToolsLocked(uri, root)
 		s.mu.Unlock()
 		syncErr := s.syncTools()
 		if syncErr != nil {
@@ -183,7 +189,7 @@ func (s *Server) reloadRoot(ctx context.Context, uri string) error {
 	)
 	if err := executor.Setup(); err != nil {
 		s.mu.Lock()
-		s.disableRootToolsLocked(root)
+		s.disableRootToolsLocked(uri, root)
 		s.mu.Unlock()
 		syncErr := s.syncTools()
 		if syncErr != nil {
@@ -193,9 +199,12 @@ func (s *Server) reloadRoot(ctx context.Context, uri string) error {
 	}
 
 	s.mu.Lock()
-	root.taskfile = executor.Taskfile
-	root.watchDirs = watchDirs
-	root.watchTaskfiles = watchTaskfiles
+	s.roots[uri] = &Root{
+		taskfile:       executor.Taskfile,
+		workdir:        workdir,
+		watchDirs:      watchDirs,
+		watchTaskfiles: watchTaskfiles,
+	}
 	s.generation++
 	s.mu.Unlock()
 
