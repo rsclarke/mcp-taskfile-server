@@ -66,17 +66,3 @@ func (s *Server) snapshotToolStateLocked() toolStateSnapshot {
 	}
 	return snap
 }
-
-// cloneStringSet returns a shallow copy of a string set.
-func cloneStringSet(values map[string]struct{}) map[string]struct{} {
-	cloned := make(map[string]struct{}, len(values))
-	for value := range values {
-		cloned[value] = struct{}{}
-	}
-	return cloned
-}
-
-// cloneStrings returns a copy of a string slice.
-func cloneStrings(values []string) []string {
-	return append([]string(nil), values...)
-}

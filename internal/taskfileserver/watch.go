@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"maps"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -21,7 +23,7 @@ func (s *Server) rootWatchState(uri string) ([]string, map[string]struct{}, bool
 		return nil, nil, false
 	}
 
-	return cloneStrings(root.watchDirs), cloneStringSet(root.watchTaskfiles), true
+	return slices.Clone(root.watchDirs), maps.Clone(root.watchTaskfiles), true
 }
 
 // syncWatcherDirs ensures the fsnotify watcher is subscribed to the provided
