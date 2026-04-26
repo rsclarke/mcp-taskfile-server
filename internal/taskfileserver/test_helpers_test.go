@@ -63,13 +63,13 @@ func newTestServer(t *testing.T, fixture string) *Server {
 	s := loadServerFromFixture(t, fixture)
 	mcpSrv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
 	s.toolRegistry = mcpSrv
-	s.registeredTools = make(map[string]mcp.Tool)
+	s.registeredTools = make(map[string]registeredTool)
 	return s
 }
 
 // schemaProperties marshals a tool's InputSchema to JSON, then unmarshals it
 // to return the properties map. This handles InputSchema being any (e.g. json.RawMessage).
-func schemaProperties(t *testing.T, tool *mcp.Tool) map[string]any {
+func schemaProperties(t *testing.T, tool *registeredTool) map[string]any {
 	t.Helper()
 
 	b, err := json.Marshal(tool.InputSchema)
@@ -101,7 +101,7 @@ func lookupTask(t *testing.T, tf *ast.Taskfile, name string) *ast.Task {
 }
 
 // toolNames returns the sorted keys from a tool map for use in error messages.
-func toolNames(tools map[string]mcp.Tool) []string {
+func toolNames[V any](tools map[string]V) []string {
 	names := make([]string, 0, len(tools))
 	for name := range tools {
 		names = append(names, name)
@@ -159,7 +159,7 @@ func newServerForDir(t *testing.T, dir string) *Server {
 	s := &Server{
 		roots:           map[string]*Root{uri: root},
 		toolRegistry:    mcpSrv,
-		registeredTools: make(map[string]mcp.Tool),
+		registeredTools: make(map[string]registeredTool),
 	}
 	if err := s.syncTools(); err != nil {
 		t.Fatalf("initial syncTools: %v", err)
@@ -168,7 +168,7 @@ func newServerForDir(t *testing.T, dir string) *Server {
 }
 
 // schemaRequired extracts the "required" array from a tool's InputSchema.
-func schemaRequired(t *testing.T, tool *mcp.Tool) []string {
+func schemaRequired(t *testing.T, tool *registeredTool) []string {
 	t.Helper()
 
 	b, err := json.Marshal(tool.InputSchema)

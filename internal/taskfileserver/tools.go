@@ -13,13 +13,22 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// registeredTool wraps an mcp.Tool with its serialized InputSchema bytes
+// so equality checks can compare schemas as raw bytes without
+// re-marshalling on every diff. The mcp.Tool is embedded so callers can
+// continue to access Name, Description, and InputSchema directly.
+type registeredTool struct {
+	mcp.Tool
+	schemaBytes []byte
+}
+
 // createToolForTask creates an MCP tool definition for a given task.
 // The tool name is sanitized for MCP compatibility; the description
 // references the original Taskfile task name for clarity. The prefix
 // parameter is used in multi-root mode to namespace tool names. The
 // taskfile is taken by value rather than via *Root so the planner can
 // run on a snapshot without touching live, mutable server state.
-func createToolForTask(tf *ast.Taskfile, prefix, taskName string, taskDef *ast.Task) *mcp.Tool {
+func createToolForTask(tf *ast.Taskfile, prefix, taskName string, taskDef *ast.Task) *registeredTool {
 	toolName := sanitizeToolName(prefixedToolName(prefix, taskName))
 
 	description := taskDef.Desc
@@ -85,15 +94,18 @@ func createToolForTask(tf *ast.Taskfile, prefix, taskName string, taskDef *ast.T
 		schema = []byte(`{"type":"object"}`)
 	}
 
-	return &mcp.Tool{
-		Name:        toolName,
-		Description: description,
-		InputSchema: json.RawMessage(schema),
+	return &registeredTool{
+		Tool: mcp.Tool{
+			Name:        toolName,
+			Description: description,
+			InputSchema: json.RawMessage(schema),
+		},
+		schemaBytes: schema,
 	}
 }
 
 type toolPlan struct {
-	tools    map[string]mcp.Tool
+	tools    map[string]registeredTool
 	handlers map[string]mcp.ToolHandler
 }
 
@@ -103,12 +115,12 @@ func buildToolPlan(snap toolStateSnapshot) toolPlan {
 	type toolCandidate struct {
 		workdir  string
 		taskName string
-		tool     mcp.Tool
+		tool     registeredTool
 		handler  mcp.ToolHandler
 	}
 
 	plan := toolPlan{
-		tools:    make(map[string]mcp.Tool),
+		tools:    make(map[string]registeredTool),
 		handlers: make(map[string]mcp.ToolHandler),
 	}
 	candidates := make(map[string][]toolCandidate)
@@ -161,26 +173,18 @@ func buildToolPlan(snap toolStateSnapshot) toolPlan {
 	return plan
 }
 
-// toolsEqual reports whether two tool definitions are equivalent
-// by comparing Name, Description, and InputSchema bytes.
-func toolsEqual(a, b *mcp.Tool) bool {
-	if a.Name != b.Name || a.Description != b.Description {
-		return false
-	}
-	aSchema, err := json.Marshal(a.InputSchema)
-	if err != nil {
-		return false
-	}
-	bSchema, err := json.Marshal(b.InputSchema)
-	if err != nil {
-		return false
-	}
-	return bytes.Equal(aSchema, bSchema)
+// toolsEqual reports whether two registered tools are equivalent by
+// comparing Name, Description, and the cached InputSchema bytes captured
+// when the tool was created.
+func toolsEqual(a, b *registeredTool) bool {
+	return a.Name == b.Name &&
+		a.Description == b.Description &&
+		bytes.Equal(a.schemaBytes, b.schemaBytes)
 }
 
 // diffTools compares the old registered tool set against the desired set and
 // returns the names of tools to remove and tools to add (or re-add due to changes).
-func diffTools(old, desired map[string]mcp.Tool) (stale, added []string) {
+func diffTools(old, desired map[string]registeredTool) (stale, added []string) {
 	for name, oldTool := range old {
 		if newTool, ok := desired[name]; !ok {
 			stale = append(stale, name)
@@ -206,7 +210,7 @@ func (s *Server) syncTools() error {
 	// Phase 1: snapshot under lock.
 	s.mu.Lock()
 	snap := s.snapshotToolStateLocked()
-	oldTools := make(map[string]mcp.Tool, len(s.registeredTools))
+	oldTools := make(map[string]registeredTool, len(s.registeredTools))
 	maps.Copy(oldTools, s.registeredTools)
 	s.mu.Unlock()
 
@@ -226,7 +230,7 @@ func (s *Server) syncTools() error {
 	}
 	for _, name := range added {
 		t := plan.tools[name]
-		s.toolRegistry.AddTool(&t, plan.handlers[name])
+		s.toolRegistry.AddTool(&t.Tool, plan.handlers[name])
 	}
 	s.registeredTools = plan.tools
 	return nil

@@ -26,7 +26,7 @@ type toolRegistry interface {
 type Server struct {
 	roots           map[string]*Root
 	toolRegistry    toolRegistry
-	registeredTools map[string]mcp.Tool
+	registeredTools map[string]registeredTool
 	mu              sync.Mutex
 	generation      uint64
 	watchCancel     context.CancelFunc

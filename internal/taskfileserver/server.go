@@ -15,7 +15,7 @@ import (
 func New() *Server {
 	return &Server{
 		roots:           make(map[string]*Root),
-		registeredTools: make(map[string]mcp.Tool),
+		registeredTools: make(map[string]registeredTool),
 	}
 }
 

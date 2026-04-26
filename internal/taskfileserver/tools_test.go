@@ -470,33 +470,40 @@ func TestToolsEqual(t *testing.T) {
 	schema1 := json.RawMessage(`{"type":"object","properties":{"FOO":{"type":"string"}}}`)
 	schema2 := json.RawMessage(`{"type":"object","properties":{"BAR":{"type":"string"}}}`)
 
+	mk := func(name, desc string, schema json.RawMessage) *registeredTool {
+		return &registeredTool{
+			Tool:        mcp.Tool{Name: name, Description: desc, InputSchema: schema},
+			schemaBytes: schema,
+		}
+	}
+
 	tests := []struct {
 		name string
-		a, b *mcp.Tool
+		a, b *registeredTool
 		want bool
 	}{
 		{
 			name: "identical",
-			a:    &mcp.Tool{Name: "greet", Description: "Say hello", InputSchema: schema1},
-			b:    &mcp.Tool{Name: "greet", Description: "Say hello", InputSchema: schema1},
+			a:    mk("greet", "Say hello", schema1),
+			b:    mk("greet", "Say hello", schema1),
 			want: true,
 		},
 		{
 			name: "different name",
-			a:    &mcp.Tool{Name: "greet", Description: "Say hello", InputSchema: schema1},
-			b:    &mcp.Tool{Name: "build", Description: "Say hello", InputSchema: schema1},
+			a:    mk("greet", "Say hello", schema1),
+			b:    mk("build", "Say hello", schema1),
 			want: false,
 		},
 		{
 			name: "different description",
-			a:    &mcp.Tool{Name: "greet", Description: "Say hello", InputSchema: schema1},
-			b:    &mcp.Tool{Name: "greet", Description: "Say goodbye", InputSchema: schema1},
+			a:    mk("greet", "Say hello", schema1),
+			b:    mk("greet", "Say goodbye", schema1),
 			want: false,
 		},
 		{
 			name: "different schema",
-			a:    &mcp.Tool{Name: "greet", Description: "Say hello", InputSchema: schema1},
-			b:    &mcp.Tool{Name: "greet", Description: "Say hello", InputSchema: schema2},
+			a:    mk("greet", "Say hello", schema1),
+			b:    mk("greet", "Say hello", schema2),
 			want: false,
 		},
 	}
@@ -517,7 +524,7 @@ func TestSyncTools_Idempotent(t *testing.T) {
 	if err := s.syncTools(); err != nil {
 		t.Fatalf("first syncTools failed: %v", err)
 	}
-	first := make(map[string]mcp.Tool)
+	first := make(map[string]registeredTool)
 	maps.Copy(first, s.registeredTools)
 
 	if err := s.syncTools(); err != nil {
@@ -680,11 +687,15 @@ func TestCreateToolForTask_WithPrefix_EnforcesMaxLength(t *testing.T) {
 
 func TestDiffTools(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object"}`)
+	mk := func(name, desc string) registeredTool {
+		return registeredTool{
+			Tool:        mcp.Tool{Name: name, Description: desc, InputSchema: schema},
+			schemaBytes: schema,
+		}
+	}
 
 	t.Run("empty to populated", func(t *testing.T) {
-		desired := map[string]mcp.Tool{
-			"greet": {Name: "greet", Description: "Say hello", InputSchema: schema},
-		}
+		desired := map[string]registeredTool{"greet": mk("greet", "Say hello")}
 		stale, added := diffTools(nil, desired)
 		if len(stale) != 0 {
 			t.Errorf("stale = %v, want empty", stale)
@@ -695,9 +706,7 @@ func TestDiffTools(t *testing.T) {
 	})
 
 	t.Run("populated to empty", func(t *testing.T) {
-		old := map[string]mcp.Tool{
-			"greet": {Name: "greet", Description: "Say hello", InputSchema: schema},
-		}
+		old := map[string]registeredTool{"greet": mk("greet", "Say hello")}
 		stale, added := diffTools(old, nil)
 		if !slices.Equal(stale, []string{"greet"}) {
 			t.Errorf("stale = %v, want [greet]", stale)
@@ -708,9 +717,7 @@ func TestDiffTools(t *testing.T) {
 	})
 
 	t.Run("unchanged", func(t *testing.T) {
-		tools := map[string]mcp.Tool{
-			"greet": {Name: "greet", Description: "Say hello", InputSchema: schema},
-		}
+		tools := map[string]registeredTool{"greet": mk("greet", "Say hello")}
 		stale, added := diffTools(tools, tools)
 		if len(stale) != 0 {
 			t.Errorf("stale = %v, want empty", stale)
@@ -721,12 +728,8 @@ func TestDiffTools(t *testing.T) {
 	})
 
 	t.Run("changed description", func(t *testing.T) {
-		old := map[string]mcp.Tool{
-			"greet": {Name: "greet", Description: "Say hello", InputSchema: schema},
-		}
-		desired := map[string]mcp.Tool{
-			"greet": {Name: "greet", Description: "Say goodbye", InputSchema: schema},
-		}
+		old := map[string]registeredTool{"greet": mk("greet", "Say hello")}
+		desired := map[string]registeredTool{"greet": mk("greet", "Say goodbye")}
 		stale, added := diffTools(old, desired)
 		if !slices.Equal(stale, []string{"greet"}) {
 			t.Errorf("stale = %v, want [greet]", stale)
@@ -769,7 +772,7 @@ func TestSyncTools_DiscardsOnGenerationMismatch(t *testing.T) {
 
 	s.mu.Lock()
 	initialGen := s.generation
-	initialTools := make(map[string]mcp.Tool)
+	initialTools := make(map[string]registeredTool)
 	maps.Copy(initialTools, s.registeredTools)
 
 	// Simulate a concurrent mutation by bumping the generation while
@@ -818,7 +821,7 @@ func TestSyncTools_OrphanedToolOnConcurrentSync(t *testing.T) {
 	s := &Server{
 		roots:           map[string]*Root{uri: root},
 		toolRegistry:    tracker,
-		registeredTools: make(map[string]mcp.Tool),
+		registeredTools: make(map[string]registeredTool),
 	}
 
 	// Initial sync registers both tools.
@@ -834,7 +837,7 @@ func TestSyncTools_OrphanedToolOnConcurrentSync(t *testing.T) {
 
 	// Reset registeredTools so the next sync will try to re-add both.
 	s.mu.Lock()
-	s.registeredTools = make(map[string]mcp.Tool)
+	s.registeredTools = make(map[string]registeredTool)
 	s.generation++
 	s.mu.Unlock()
 
@@ -860,7 +863,7 @@ func TestSyncTools_OrphanedToolOnConcurrentSync(t *testing.T) {
 	// G1: snapshot with both tasks, then mutate state before G1 applies.
 	s.mu.Lock()
 	snap := s.snapshotToolStateLocked()
-	oldTools := make(map[string]mcp.Tool, len(s.registeredTools))
+	oldTools := make(map[string]registeredTool, len(s.registeredTools))
 	maps.Copy(oldTools, s.registeredTools)
 
 	// Simulate concurrent mutation while G1 is "planning".
@@ -886,7 +889,7 @@ func TestSyncTools_OrphanedToolOnConcurrentSync(t *testing.T) {
 		}
 		for _, name := range added {
 			tool := plan.tools[name]
-			s.toolRegistry.AddTool(&tool, plan.handlers[name])
+			s.toolRegistry.AddTool(&tool.Tool, plan.handlers[name])
 		}
 		s.registeredTools = plan.tools
 		s.mu.Unlock()
@@ -899,7 +902,7 @@ func TestSyncTools_OrphanedToolOnConcurrentSync(t *testing.T) {
 
 	// registeredTools should have {taskA} only.
 	s.mu.Lock()
-	regTools := make(map[string]mcp.Tool)
+	regTools := make(map[string]registeredTool)
 	maps.Copy(regTools, s.registeredTools)
 	s.mu.Unlock()
 
