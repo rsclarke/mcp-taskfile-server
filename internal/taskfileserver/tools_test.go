@@ -18,7 +18,7 @@ func TestCreateToolForTask_Basic(t *testing.T) {
 	root := onlyRoot(t, s)
 
 	taskDef := lookupTask(t, root.taskfile, "greet")
-	tool := createToolForTask(root, "", "greet", taskDef)
+	tool := createToolForTask(root.taskfile, "", "greet", taskDef)
 
 	if tool.Name != "greet" {
 		t.Errorf("Name = %q, want %q", tool.Name, "greet")
@@ -38,7 +38,7 @@ func TestCreateToolForTask_NoDescription(t *testing.T) {
 	root := onlyRoot(t, s)
 
 	taskDef := lookupTask(t, root.taskfile, "build")
-	tool := createToolForTask(root, "", "build", taskDef)
+	tool := createToolForTask(root.taskfile, "", "build", taskDef)
 
 	want := "Execute task: build"
 	if tool.Description != want {
@@ -51,7 +51,7 @@ func TestCreateToolForTask_TaskVars(t *testing.T) {
 	root := onlyRoot(t, s)
 
 	taskDef := lookupTask(t, root.taskfile, "deploy")
-	tool := createToolForTask(root, "", "deploy", taskDef)
+	tool := createToolForTask(root.taskfile, "", "deploy", taskDef)
 
 	props := schemaProperties(t, tool)
 	if len(props) != 2 {
@@ -76,7 +76,7 @@ func TestCreateToolForTask_GlobalVars(t *testing.T) {
 	root := onlyRoot(t, s)
 
 	taskDef := lookupTask(t, root.taskfile, "info")
-	tool := createToolForTask(root, "", "info", taskDef)
+	tool := createToolForTask(root.taskfile, "", "info", taskDef)
 
 	props := schemaProperties(t, tool)
 	prop, ok := props["APP_NAME"]
@@ -96,7 +96,7 @@ func TestCreateToolForTask_OverrideVars(t *testing.T) {
 	root := onlyRoot(t, s)
 
 	taskDef := lookupTask(t, root.taskfile, "deploy")
-	tool := createToolForTask(root, "", "deploy", taskDef)
+	tool := createToolForTask(root.taskfile, "", "deploy", taskDef)
 
 	props := schemaProperties(t, tool)
 	prop, ok := props["ENV"]
@@ -218,7 +218,7 @@ func TestCreateToolForTask_Namespaced(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.taskName, func(t *testing.T) {
 			taskDef := lookupTask(t, root.taskfile, tt.taskName)
-			tool := createToolForTask(root, "", tt.taskName, taskDef)
+			tool := createToolForTask(root.taskfile, "", tt.taskName, taskDef)
 
 			if tool.Name != tt.wantTool {
 				t.Errorf("Name = %q, want %q", tool.Name, tt.wantTool)
@@ -236,7 +236,7 @@ func TestCreateToolForTask_Wildcard(t *testing.T) {
 
 	t.Run("single wildcard", func(t *testing.T) {
 		taskDef := lookupTask(t, root.taskfile, "start:*")
-		tool := createToolForTask(root, "", "start:*", taskDef)
+		tool := createToolForTask(root.taskfile, "", "start:*", taskDef)
 
 		if tool.Name != "start" {
 			t.Errorf("Name = %q, want %q", tool.Name, "start")
@@ -255,7 +255,7 @@ func TestCreateToolForTask_Wildcard(t *testing.T) {
 
 	t.Run("double wildcard", func(t *testing.T) {
 		taskDef := lookupTask(t, root.taskfile, "deploy:*:*")
-		tool := createToolForTask(root, "", "deploy:*:*", taskDef)
+		tool := createToolForTask(root.taskfile, "", "deploy:*:*", taskDef)
 
 		if tool.Name != "deploy" {
 			t.Errorf("Name = %q, want %q", tool.Name, "deploy")
@@ -280,7 +280,7 @@ func TestCreateToolForTask_LeadingDot(t *testing.T) {
 	root := onlyRoot(t, s)
 
 	taskDef := lookupTask(t, root.taskfile, "uv:.venv")
-	tool := createToolForTask(root, "", "uv:.venv", taskDef)
+	tool := createToolForTask(root.taskfile, "", "uv:.venv", taskDef)
 
 	if tool.Name != "uv_.venv" {
 		t.Errorf("Name = %q, want %q", tool.Name, "uv_.venv")
@@ -652,7 +652,7 @@ func TestCreateToolForTask_WithPrefix(t *testing.T) {
 	root := onlyRoot(t, s)
 
 	taskDef := lookupTask(t, root.taskfile, "greet")
-	tool := createToolForTask(root, "myproject", "greet", taskDef)
+	tool := createToolForTask(root.taskfile, "myproject", "greet", taskDef)
 
 	if tool.Name != "myproject_greet" {
 		t.Errorf("Name = %q, want %q", tool.Name, "myproject_greet")
@@ -668,7 +668,7 @@ func TestCreateToolForTask_WithPrefix_EnforcesMaxLength(t *testing.T) {
 	taskDef := lookupTask(t, root.taskfile, "greet")
 	prefix := strings.Repeat("project", 20)
 
-	tool := createToolForTask(root, prefix, "greet", taskDef)
+	tool := createToolForTask(root.taskfile, prefix, "greet", taskDef)
 
 	if len(tool.Name) != maxToolNameLength {
 		t.Fatalf("len(tool.Name) = %d, want %d", len(tool.Name), maxToolNameLength)
@@ -743,7 +743,9 @@ func TestBuildToolPlan_FromSnapshot(t *testing.T) {
 
 	snap := toolStateSnapshot{
 		generation: 42,
-		roots:      map[string]*Root{"file:///test": root},
+		roots: map[string]toolRootSnapshot{
+			"file:///test": {workdir: root.workdir, taskfile: root.taskfile},
+		},
 	}
 
 	plan := buildToolPlan(snap)

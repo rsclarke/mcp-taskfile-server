@@ -16,8 +16,10 @@ import (
 // createToolForTask creates an MCP tool definition for a given task.
 // The tool name is sanitized for MCP compatibility; the description
 // references the original Taskfile task name for clarity. The prefix
-// parameter is used in multi-root mode to namespace tool names.
-func createToolForTask(root *Root, prefix, taskName string, taskDef *ast.Task) *mcp.Tool {
+// parameter is used in multi-root mode to namespace tool names. The
+// taskfile is taken by value rather than via *Root so the planner can
+// run on a snapshot without touching live, mutable server state.
+func createToolForTask(tf *ast.Taskfile, prefix, taskName string, taskDef *ast.Task) *mcp.Tool {
 	toolName := sanitizeToolName(prefixedToolName(prefix, taskName))
 
 	description := taskDef.Desc
@@ -32,8 +34,8 @@ func createToolForTask(root *Root, prefix, taskName string, taskDef *ast.Task) *
 	allVars := make(map[string]ast.Var)
 
 	// Add global variables first
-	if root.taskfile.Vars != nil && root.taskfile.Vars.Len() > 0 {
-		maps.Insert(allVars, root.taskfile.Vars.All())
+	if tf.Vars != nil && tf.Vars.Len() > 0 {
+		maps.Insert(allVars, tf.Vars.All())
 	}
 
 	// Add task-specific variables (these override global ones)
@@ -99,7 +101,7 @@ type toolPlan struct {
 // without accessing or mutating the server.
 func buildToolPlan(snap toolStateSnapshot) toolPlan {
 	type toolCandidate struct {
-		root     *Root
+		workdir  string
 		taskName string
 		tool     mcp.Tool
 		handler  mcp.ToolHandler
@@ -116,16 +118,16 @@ func buildToolPlan(snap toolStateSnapshot) toolPlan {
 			continue
 		}
 
-		prefix := rootPrefix(root, len(snap.roots))
+		prefix := rootPrefix(root.workdir, len(snap.roots))
 
 		for taskName, taskDef := range root.taskfile.Tasks.All(nil) {
 			if taskDef.Internal {
 				continue
 			}
 
-			tool := createToolForTask(root, prefix, taskName, taskDef)
+			tool := createToolForTask(root.taskfile, prefix, taskName, taskDef)
 			candidates[tool.Name] = append(candidates[tool.Name], toolCandidate{
-				root:     root,
+				workdir:  root.workdir,
 				taskName: taskName,
 				tool:     *tool,
 				handler:  createTaskHandlerForWorkdir(root.workdir, taskName),
@@ -144,7 +146,7 @@ func buildToolPlan(snap toolStateSnapshot) toolPlan {
 		if len(group) > 1 {
 			details := make([]string, 0, len(group))
 			for _, candidate := range group {
-				details = append(details, fmt.Sprintf("%s (%s)", candidate.taskName, candidate.root.workdir))
+				details = append(details, fmt.Sprintf("%s (%s)", candidate.taskName, candidate.workdir))
 			}
 			slices.Sort(details)
 			log.Printf("excluding colliding tool name %q from MCP exposure: %s", name, strings.Join(details, ", "))

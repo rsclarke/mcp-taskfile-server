@@ -114,8 +114,16 @@ func toolNames(tools map[string]mcp.Tool) []string {
 // snapshotFromServer builds a toolStateSnapshot from the server's current
 // roots without holding the mutex. Intended for tests only.
 func snapshotFromServer(s *Server) toolStateSnapshot {
-	snap := toolStateSnapshot{roots: make(map[string]*Root, len(s.roots))}
-	maps.Copy(snap.roots, s.roots)
+	snap := toolStateSnapshot{
+		generation: s.generation,
+		roots:      make(map[string]toolRootSnapshot, len(s.roots)),
+	}
+	for uri, root := range s.roots {
+		snap.roots[uri] = toolRootSnapshot{
+			workdir:  root.workdir,
+			taskfile: root.taskfile,
+		}
+	}
 	return snap
 }
 
