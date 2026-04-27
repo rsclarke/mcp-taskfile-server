@@ -92,7 +92,7 @@ func TestCreateTaskHandlerForWorkdir_WildcardMATCH(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handler := createTaskHandlerForWorkdir(root.workdir, tt.taskName)
+			handler := createTaskHandlerForWorkdir(root.Workdir, tt.taskName)
 			result := callToolHandler(t, handler, tt.toolName, tt.arguments)
 
 			if result.IsError != tt.wantError {
@@ -113,7 +113,7 @@ func TestCreateTaskHandlerForWorkdir_InvalidArguments(t *testing.T) {
 	s := loadServerFromFixture(t, "basic")
 	root := onlyRoot(t, s)
 
-	handler := createTaskHandlerForWorkdir(root.workdir, "greet")
+	handler := createTaskHandlerForWorkdir(root.Workdir, "greet")
 	args := json.RawMessage(`{invalid json}`)
 	result, err := handler(t.Context(), &mcp.CallToolRequest{
 		Params: &mcp.CallToolParamsRaw{
@@ -138,7 +138,7 @@ func TestCreateTaskHandlerForWorkdir_StructuredSuccessContent(t *testing.T) {
 	s := newTempServer(t, []byte("version: '3'\ntasks:\n  noisy:\n    desc: Emit on both streams\n    cmds:\n      - sh -c 'echo out-line; echo err-line 1>&2'\n"))
 	root := onlyRoot(t, s)
 
-	handler := createTaskHandlerForWorkdir(root.workdir, "noisy")
+	handler := createTaskHandlerForWorkdir(root.Workdir, "noisy")
 	result := callToolHandler(t, handler, "noisy", nil)
 
 	if result.IsError {
@@ -174,7 +174,7 @@ func TestCreateTaskHandlerForWorkdir_StructuredFailureContent(t *testing.T) {
 	s := newTempServer(t, []byte("version: '3'\ntasks:\n  fail:\n    desc: Fail with both streams\n    cmds:\n      - sh -c 'echo before-fail; echo bad-news 1>&2; exit 7'\n"))
 	root := onlyRoot(t, s)
 
-	handler := createTaskHandlerForWorkdir(root.workdir, "fail")
+	handler := createTaskHandlerForWorkdir(root.Workdir, "fail")
 	result := callToolHandler(t, handler, "fail", nil)
 
 	if !result.IsError {
@@ -198,7 +198,7 @@ func TestCreateTaskHandlerForWorkdir_StructuredSilentSuccess(t *testing.T) {
 	s := newTempServer(t, []byte("version: '3'\ntasks:\n  quiet:\n    desc: A task with no output\n    cmds:\n      - 'true'\n"))
 	root := onlyRoot(t, s)
 
-	handler := createTaskHandlerForWorkdir(root.workdir, "quiet")
+	handler := createTaskHandlerForWorkdir(root.Workdir, "quiet")
 	result := callToolHandler(t, handler, "quiet", nil)
 
 	if result.IsError {

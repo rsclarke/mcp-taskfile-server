@@ -1,4 +1,4 @@
-package taskfileserver
+package roots
 
 import (
 	"os"
@@ -50,9 +50,9 @@ func TestDirToURI(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	uri := dirToURI(dir)
+	uri := DirToURI(dir)
 	if strings.Contains(uri, "#") || strings.Contains(uri, "?") {
-		t.Fatalf("dirToURI(%q) returned unescaped URI %q", dir, uri)
+		t.Fatalf("DirToURI(%q) returned unescaped URI %q", dir, uri)
 	}
 
 	roundTrip, err := fileURIToPath(uri)
@@ -70,7 +70,7 @@ func TestFileURIToPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := filepath.Clean(dir)
-	uri := dirToURI(dir)
+	uri := DirToURI(dir)
 	localhostURI := strings.Replace(uri, "file://", "file://localhost", 1)
 
 	tests := []struct {
@@ -130,7 +130,7 @@ func TestCanonicalRootURI(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wantURI := dirToURI(dir)
+	wantURI := DirToURI(dir)
 	wantDir := filepath.Clean(dir)
 	aliasURI := strings.Replace(wantURI, "file://", "file://localhost", 1)
 
@@ -144,21 +144,21 @@ func TestCanonicalRootURI(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotURI, gotDir, err := canonicalRootURI(tt.uri)
+			gotURI, gotDir, err := CanonicalRootURI(tt.uri)
 			if err != nil {
-				t.Fatalf("canonicalRootURI(%q) failed: %v", tt.uri, err)
+				t.Fatalf("CanonicalRootURI(%q) failed: %v", tt.uri, err)
 			}
 			if gotURI != wantURI {
-				t.Fatalf("canonicalRootURI(%q) URI = %q, want %q", tt.uri, gotURI, wantURI)
+				t.Fatalf("CanonicalRootURI(%q) URI = %q, want %q", tt.uri, gotURI, wantURI)
 			}
 			if gotDir != wantDir {
-				t.Fatalf("canonicalRootURI(%q) dir = %q, want %q", tt.uri, gotDir, wantDir)
+				t.Fatalf("CanonicalRootURI(%q) dir = %q, want %q", tt.uri, gotDir, wantDir)
 			}
 		})
 	}
 }
 
-func TestLoadRoot_DoesNotWalkParentDirectories(t *testing.T) {
+func TestLoad_DoesNotWalkParentDirectories(t *testing.T) {
 	parent := t.TempDir()
 	if err := os.WriteFile(filepath.Join(parent, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  parent:\n    cmds:\n      - echo parent\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -169,8 +169,8 @@ func TestLoadRoot_DoesNotWalkParentDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := loadRoot(t.Context(), child); err == nil {
-		t.Fatal("expected loadRoot to fail when the root has no direct Taskfile")
+	if _, err := Load(t.Context(), child); err == nil {
+		t.Fatal("expected Load to fail when the root has no direct Taskfile")
 	}
 }
 
@@ -180,7 +180,7 @@ func TestTaskfileLocationToPath_FileURI(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, ok, err := taskfileLocationToPath(dirToURI(dir))
+	got, ok, err := taskfileLocationToPath(DirToURI(dir))
 	if err != nil {
 		t.Fatalf("taskfileLocationToPath failed: %v", err)
 	}
@@ -199,27 +199,5 @@ func TestTaskfileLocationToPath_IgnoresNonLocalURI(t *testing.T) {
 	}
 	if ok {
 		t.Fatalf("expected non-file URI to be ignored, got %q", got)
-	}
-}
-
-func TestSanitizeRootPrefix(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"myproject", "myproject"},
-		{"my project", "my_project"},
-		{"my/project", "my_project"},
-		{"___", "root"},
-		{"", "root"},
-		{"a-b.c_d", "a-b.c_d"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := sanitizeRootPrefix(tt.input)
-			if got != tt.want {
-				t.Errorf("sanitizeRootPrefix(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
 	}
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/rsclarke/mcp-taskfile-server/internal/roots"
 )
 
 func TestHandleInitialized_WithRoots(t *testing.T) {
@@ -22,7 +23,7 @@ func TestHandleInitialized_WithRoots(t *testing.T) {
 	ts := New()
 	ctx := t.Context()
 
-	rootURI := dirToURI(dir)
+	rootURI := roots.DirToURI(dir)
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
 	client.AddRoots(&mcp.Root{URI: rootURI, Name: "test"})
 
@@ -89,7 +90,7 @@ func TestHandleInitialized_CallToolExecutesSingleRootTool(t *testing.T) {
 	ts := New()
 	ctx := t.Context()
 
-	rootURI := dirToURI(dir)
+	rootURI := roots.DirToURI(dir)
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
 	client.AddRoots(&mcp.Root{URI: rootURI, Name: "test"})
 
@@ -141,7 +142,7 @@ func TestHandleInitialized_DeduplicatesEquivalentRootURIs(t *testing.T) {
 	ts := New()
 	ctx := t.Context()
 
-	rootURI := dirToURI(dir)
+	rootURI := roots.DirToURI(dir)
 	aliasURI := strings.Replace(rootURI, "file://", "file://localhost", 1)
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
 	client.AddRoots(
@@ -204,8 +205,8 @@ func TestHandleRootsChanged_AddAndRemove(t *testing.T) {
 	ts := New()
 	ctx := t.Context()
 
-	uri1 := dirToURI(dir1)
-	uri2 := dirToURI(dir2)
+	uri1 := roots.DirToURI(dir1)
+	uri2 := roots.DirToURI(dir2)
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
 	client.AddRoots(&mcp.Root{URI: uri1, Name: "root1"})
@@ -270,7 +271,7 @@ func TestHandleRootsChanged_EquivalentURIAliasKeepsSingleRoot(t *testing.T) {
 	ts := New()
 	ctx := t.Context()
 
-	rootURI := dirToURI(dir)
+	rootURI := roots.DirToURI(dir)
 	aliasURI := strings.Replace(rootURI, "file://", "file://localhost", 1)
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
@@ -357,7 +358,7 @@ func TestHandleInitialized_NoPublicTasks(t *testing.T) {
 
 	ts := New()
 	ctx := t.Context()
-	uri := dirToURI(dir)
+	uri := roots.DirToURI(dir)
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
 	client.AddRoots(&mcp.Root{URI: uri, Name: "root"})
@@ -407,8 +408,8 @@ func TestHandleRootsChanged_TransitionToUnprefixed(t *testing.T) {
 	ts := New()
 	ctx := t.Context()
 
-	uri1 := dirToURI(dir1)
-	uri2 := dirToURI(dir2)
+	uri1 := roots.DirToURI(dir1)
+	uri2 := roots.DirToURI(dir2)
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
 	client.AddRoots(
@@ -475,8 +476,8 @@ func TestHandleRootsChanged_TransitionToUnprefixedCallTool(t *testing.T) {
 	ts := New()
 	ctx := t.Context()
 
-	uri1 := dirToURI(dir1)
-	uri2 := dirToURI(dir2)
+	uri1 := roots.DirToURI(dir1)
+	uri2 := roots.DirToURI(dir2)
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
 	client.AddRoots(
@@ -541,7 +542,7 @@ func TestHandleRootsChanged_RemoveLastRootClearsTools(t *testing.T) {
 
 	ts := New()
 	ctx := t.Context()
-	uri := dirToURI(dir)
+	uri := roots.DirToURI(dir)
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
 	client.AddRoots(&mcp.Root{URI: uri, Name: "root"})
@@ -593,7 +594,7 @@ func TestToolListChangedNotification_OnFileChange(t *testing.T) {
 	ts := New()
 	ctx := t.Context()
 
-	rootURI := dirToURI(dir)
+	rootURI := roots.DirToURI(dir)
 
 	// Track notifications received by the client.
 	notified := make(chan struct{}, 10)

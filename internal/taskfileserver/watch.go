@@ -178,7 +178,7 @@ func (s *Server) rootWatchState(uri string) ([]string, map[string]struct{}, bool
 		return nil, nil, false
 	}
 
-	return slices.Clone(root.watchDirs), maps.Clone(root.watchTaskfiles), true
+	return slices.Clone(root.WatchDirs), maps.Clone(root.WatchTaskfiles), true
 }
 
 // syncWatcherDirs ensures the fsnotify watcher is subscribed to the provided

@@ -10,13 +10,14 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/rsclarke/mcp-taskfile-server/internal/logging"
+	"github.com/rsclarke/mcp-taskfile-server/internal/roots"
 )
 
 // New creates a new Taskfile MCP server. The server starts with a
 // silent logger; callers should override it via SetLogger before Run.
 func New() *Server {
 	s := &Server{
-		roots:           make(map[string]*Root),
+		roots:           make(map[string]*roots.Root),
 		registeredTools: make(map[string]registeredTool),
 	}
 	s.logger.Store(slog.New(slog.DiscardHandler))
@@ -72,14 +73,14 @@ func (r reconcileResult) changed() bool {
 // failures that cannot fall back to an unloaded placeholder are logged and
 // skipped.
 //
-// This helper performs disk I/O (loadRoot, newUnloadedRoot) and MUST be
-// called without s.mu held.
-func (s *Server) loadDesired(ctx context.Context, roots []*mcp.Root, existing map[string]struct{}) (map[string]struct{}, map[string]*Root) {
-	desiredURIs := make(map[string]struct{}, len(roots))
-	loadedRoots := make(map[string]*Root, len(roots))
+// This helper performs disk I/O (roots.Load, roots.NewUnloaded) and MUST
+// be called without s.mu held.
+func (s *Server) loadDesired(ctx context.Context, mcpRoots []*mcp.Root, existing map[string]struct{}) (map[string]struct{}, map[string]*roots.Root) {
+	desiredURIs := make(map[string]struct{}, len(mcpRoots))
+	loadedRoots := make(map[string]*roots.Root, len(mcpRoots))
 
-	for _, r := range roots {
-		canonicalURI, dir, parseErr := canonicalRootURI(r.URI)
+	for _, r := range mcpRoots {
+		canonicalURI, dir, parseErr := roots.CanonicalRootURI(r.URI)
 		if parseErr != nil {
 			s.log().Warn("skipping root with invalid URI",
 				slog.String("event", "root.invalid_uri"),
@@ -96,14 +97,14 @@ func (s *Server) loadDesired(ctx context.Context, roots []*mcp.Root, existing ma
 			continue
 		}
 
-		root, loadErr := loadRoot(ctx, dir)
+		root, loadErr := roots.Load(ctx, dir)
 		if loadErr != nil {
 			s.log().Warn("failed to load root, falling back to unloaded placeholder",
 				slog.String("event", "root.load_failed"),
 				slog.String("root_uri", r.URI),
 				slog.Any("error", loadErr),
 			)
-			root, loadErr = newUnloadedRoot(dir)
+			root, loadErr = roots.NewUnloaded(dir)
 			if loadErr != nil {
 				s.log().Error("failed to watch unloaded root",
 					slog.String("event", "root.unloaded_failed"),
@@ -239,7 +240,7 @@ func listClientRoots(ctx context.Context, session *mcp.ServerSession) ([]*mcp.Ro
 	if wdErr != nil {
 		return nil, fmt.Errorf("failed to get working directory: %w", wdErr)
 	}
-	return []*mcp.Root{{URI: dirToURI(workdir)}}, nil
+	return []*mcp.Root{{URI: roots.DirToURI(workdir)}}, nil
 }
 
 // HandleInitialized is called after the client handshake completes.

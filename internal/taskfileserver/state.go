@@ -7,20 +7,8 @@ import (
 
 	"github.com/go-task/task/v3/taskfile/ast"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/rsclarke/mcp-taskfile-server/internal/roots"
 )
-
-// Root holds the loaded per-root Taskfile data. Once a *Root is published
-// into Server.roots its fields are treated as read-only; mutations are
-// performed by replacing the pointer in the map rather than writing
-// through the existing value, so concurrent readers (snapshots, watchers)
-// always observe a consistent state. *Root values therefore must NOT be
-// mutated outside roots.go.
-type Root struct {
-	taskfile       *ast.Taskfile
-	workdir        string
-	watchDirs      []string
-	watchTaskfiles map[string]struct{}
-}
 
 // toolRegistry is the subset of *mcp.Server used for tool registration.
 type toolRegistry interface {
@@ -41,7 +29,7 @@ type toolRegistry interface {
 // and lifecycle that is independent of mu. Callers must not hold mu
 // while invoking watcher methods.
 type Server struct {
-	roots           map[string]*Root
+	roots           map[string]*roots.Root
 	toolRegistry    toolRegistry
 	registeredTools map[string]registeredTool
 	watchers        *watcherManager
@@ -60,7 +48,7 @@ func (s *Server) log() *slog.Logger {
 // toolRootSnapshot is an immutable per-root view captured under lock so
 // the planner can run without holding s.mu and without dereferencing a
 // live *Root that another goroutine may mutate. The taskfile pointer is
-// captured by value: even if reloadRoot later swaps root.taskfile, this
+// captured by value: even if reloadRoot later swaps root.Taskfile, this
 // snapshot keeps observing the AST that was current at snapshot time.
 type toolRootSnapshot struct {
 	workdir  string
@@ -83,8 +71,8 @@ func (s *Server) snapshotToolStateLocked() toolStateSnapshot {
 	}
 	for uri, root := range s.roots {
 		snap.roots[uri] = toolRootSnapshot{
-			workdir:  root.workdir,
-			taskfile: root.taskfile,
+			workdir:  root.Workdir,
+			taskfile: root.Taskfile,
 		}
 	}
 	return snap

@@ -3,12 +3,15 @@ package taskfileserver
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/rsclarke/mcp-taskfile-server/internal/roots"
 )
 
 func TestLoadRoot_WatchTaskfilesIncludesTransitive(t *testing.T) {
@@ -28,7 +31,7 @@ func TestLoadRoot_WatchTaskfilesIncludesTransitive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	root, err := loadRoot(t.Context(), dir)
+	root, err := roots.Load(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("loadRoot: %v", err)
 	}
@@ -39,7 +42,7 @@ func TestLoadRoot_WatchTaskfilesIncludesTransitive(t *testing.T) {
 		filepath.Join(deepDir, "Taskfile.yml"),
 	}
 
-	got := sortedKeys(root.watchTaskfiles)
+	got := slices.Sorted(maps.Keys(root.WatchTaskfiles))
 	if !slices.Equal(got, want) {
 		t.Fatalf("watchTaskfiles = %v, want %v", got, want)
 	}
@@ -107,11 +110,11 @@ func TestWatchTaskfiles_IgnoresUnincludedChildTaskfile(t *testing.T) {
 
 	s := newServerForDir(t, dir)
 	root := onlyRoot(t, s)
-	if _, ok := root.watchTaskfiles[filepath.Join(childDir, "Taskfile.yml")]; ok {
+	if _, ok := root.WatchTaskfiles[filepath.Join(childDir, "Taskfile.yml")]; ok {
 		t.Fatal("unexpected watch on unincluded child Taskfile")
 	}
 
-	initialTaskfile := root.taskfile
+	initialTaskfile := root.Taskfile
 	ctx := t.Context()
 
 	startTestWatchers(ctx, s)
@@ -126,7 +129,7 @@ func TestWatchTaskfiles_IgnoresUnincludedChildTaskfile(t *testing.T) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if onlyRoot(t, s).taskfile != initialTaskfile {
+	if onlyRoot(t, s).Taskfile != initialTaskfile {
 		t.Fatal("editing an unincluded child Taskfile unexpectedly reloaded the root")
 	}
 }
@@ -352,7 +355,7 @@ func TestReloadRoot_RemovesTask(t *testing.T) {
 
 	// Remove the "goodbye" task from the Taskfile.
 	updated := []byte("version: '3'\ntasks:\n  hello:\n    desc: Say hello\n    cmds:\n      - echo hello\n")
-	if err := os.WriteFile(filepath.Join(onlyRoot(t, s).workdir, "Taskfile.yml"), updated, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(onlyRoot(t, s).Workdir, "Taskfile.yml"), updated, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -378,7 +381,7 @@ func TestReloadRoot_RemovesAllPublicTasks(t *testing.T) {
 	}
 
 	updated := []byte("version: '3'\ntasks:\n  helper:\n    internal: true\n    cmds:\n      - echo hidden\n")
-	if err := os.WriteFile(filepath.Join(onlyRoot(t, s).workdir, "Taskfile.yml"), updated, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(onlyRoot(t, s).Workdir, "Taskfile.yml"), updated, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -403,7 +406,7 @@ func TestReloadRoot_UpdatesChangedTask(t *testing.T) {
 
 	// Update the task description.
 	updated := []byte("version: '3'\ntasks:\n  greet:\n    desc: Say hi there\n    cmds:\n      - echo hi there\n")
-	if err := os.WriteFile(filepath.Join(onlyRoot(t, s).workdir, "Taskfile.yml"), updated, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(onlyRoot(t, s).Workdir, "Taskfile.yml"), updated, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -437,7 +440,7 @@ func TestWatchTaskfiles_DebounceCoalesces(t *testing.T) {
 	// Fire multiple rapid writes within the debounce window (200ms).
 	for i := range 5 {
 		content := fmt.Appendf(nil, "version: '3'\ntasks:\n  hello:\n    desc: Attempt %d\n    cmds:\n      - echo hello\n", i)
-		if err := os.WriteFile(filepath.Join(root.workdir, "Taskfile.yml"), content, 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(root.Workdir, "Taskfile.yml"), content, 0o600); err != nil {
 			t.Fatal(err)
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -475,14 +478,14 @@ func TestWatchTaskfiles_InvalidRootTaskfileRemovesToolsUntilRestored(t *testing.
 	time.Sleep(100 * time.Millisecond)
 
 	invalid := []byte("version: '3'\ntasks:\n  hello:\n    desc: Broken hello\n    cmds:\n      - echo hello\n    vars: [\n")
-	if err := os.WriteFile(filepath.Join(root.workdir, "Taskfile.yml"), invalid, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root.Workdir, "Taskfile.yml"), invalid, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	waitForToolCount(t, s, 0)
 
 	restored := []byte("version: '3'\ntasks:\n  hello:\n    desc: Restored hello\n    cmds:\n      - echo hello again\n")
-	if err := os.WriteFile(filepath.Join(root.workdir, "Taskfile.yml"), restored, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root.Workdir, "Taskfile.yml"), restored, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -519,7 +522,7 @@ func TestWatchTaskfiles_DeletedRootTaskfileRemovesToolsUntilRestored(t *testing.
 
 	time.Sleep(100 * time.Millisecond)
 
-	taskfilePath := filepath.Join(root.workdir, "Taskfile.yml")
+	taskfilePath := filepath.Join(root.Workdir, "Taskfile.yml")
 	if err := os.Remove(taskfilePath); err != nil {
 		t.Fatal(err)
 	}
@@ -555,7 +558,7 @@ func TestWatchTaskfiles_DeletedRootTaskfileRemovesToolsUntilRestored(t *testing.
 
 func TestReconcileRoots_MissingInitialTaskfileLoadsWhenCreatedLater(t *testing.T) {
 	dir := t.TempDir()
-	uri := dirToURI(dir)
+	uri := roots.DirToURI(dir)
 	s := New()
 	s.toolRegistry = noopRegistry{}
 	defer s.Shutdown()
@@ -569,14 +572,14 @@ func TestReconcileRoots_MissingInitialTaskfileLoadsWhenCreatedLater(t *testing.T
 	s.restartWatchers(t.Context())
 
 	root := onlyRoot(t, s)
-	if root.taskfile != nil {
+	if root.Taskfile != nil {
 		t.Fatal("expected root to be tracked without a loaded Taskfile")
 	}
-	if !slices.Equal(root.watchDirs, []string{dir}) {
-		t.Fatalf("watchDirs = %v, want [%s]", root.watchDirs, dir)
+	if !slices.Equal(root.WatchDirs, []string{dir}) {
+		t.Fatalf("watchDirs = %v, want [%s]", root.WatchDirs, dir)
 	}
 	for _, filename := range []string{"Taskfile.yml", "Taskfile.yaml", "Taskfile.dist.yml", "Taskfile.dist.yaml"} {
-		if _, ok := root.watchTaskfiles[filepath.Join(dir, filename)]; !ok {
+		if _, ok := root.WatchTaskfiles[filepath.Join(dir, filename)]; !ok {
 			t.Fatalf("expected %s to be watched", filename)
 		}
 	}
@@ -605,7 +608,7 @@ func TestReconcileRoots_MissingInitialTaskfileLoadsWhenCreatedLater(t *testing.T
 			tool, ok := s.registeredTools["hello"]
 			loadedRoot := s.roots[uri]
 			s.mu.Unlock()
-			if ok && tool.Description == "Added after startup" && loadedRoot != nil && loadedRoot.taskfile != nil {
+			if ok && tool.Description == "Added after startup" && loadedRoot != nil && loadedRoot.Taskfile != nil {
 				return
 			}
 		}

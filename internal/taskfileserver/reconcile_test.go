@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+
+	"github.com/rsclarke/mcp-taskfile-server/internal/roots"
 )
 
 // writeTaskfile creates a directory with a Taskfile that defines a single
@@ -16,7 +18,7 @@ func writeTaskfile(t *testing.T, name string) string {
 	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), body, 0o600); err != nil {
 		t.Fatalf("write Taskfile: %v", err)
 	}
-	return dirToURI(dir)
+	return roots.DirToURI(dir)
 }
 
 // newReconcileServer returns a Server suitable for reconcile tests: it has

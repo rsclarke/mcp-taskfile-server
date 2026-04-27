@@ -11,14 +11,15 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/rsclarke/mcp-taskfile-server/internal/roots"
 )
 
 func TestCreateToolForTask_Basic(t *testing.T) {
 	s := loadServerFromFixture(t, "basic")
 	root := onlyRoot(t, s)
 
-	taskDef := lookupTask(t, root.taskfile, "greet")
-	tool := createToolForTask(root.taskfile, "", "greet", taskDef)
+	taskDef := lookupTask(t, root.Taskfile, "greet")
+	tool := createToolForTask(root.Taskfile, "", "greet", taskDef)
 
 	if tool.Name != "greet" {
 		t.Errorf("Name = %q, want %q", tool.Name, "greet")
@@ -37,8 +38,8 @@ func TestCreateToolForTask_NoDescription(t *testing.T) {
 	s := loadServerFromFixture(t, "no-desc")
 	root := onlyRoot(t, s)
 
-	taskDef := lookupTask(t, root.taskfile, "build")
-	tool := createToolForTask(root.taskfile, "", "build", taskDef)
+	taskDef := lookupTask(t, root.Taskfile, "build")
+	tool := createToolForTask(root.Taskfile, "", "build", taskDef)
 
 	want := "Execute task: build"
 	if tool.Description != want {
@@ -52,8 +53,8 @@ func TestCreateToolForTask_TaskVarsExcluded(t *testing.T) {
 	s := loadServerFromFixture(t, "task-vars")
 	root := onlyRoot(t, s)
 
-	taskDef := lookupTask(t, root.taskfile, "deploy")
-	tool := createToolForTask(root.taskfile, "", "deploy", taskDef)
+	taskDef := lookupTask(t, root.Taskfile, "deploy")
+	tool := createToolForTask(root.Taskfile, "", "deploy", taskDef)
 
 	props := schemaProperties(t, tool)
 	if len(props) != 0 {
@@ -68,8 +69,8 @@ func TestCreateToolForTask_GlobalVars(t *testing.T) {
 	s := loadServerFromFixture(t, "global-vars")
 	root := onlyRoot(t, s)
 
-	taskDef := lookupTask(t, root.taskfile, "info")
-	tool := createToolForTask(root.taskfile, "", "info", taskDef)
+	taskDef := lookupTask(t, root.Taskfile, "info")
+	tool := createToolForTask(root.Taskfile, "", "info", taskDef)
 
 	props := schemaProperties(t, tool)
 	prop, ok := props["APP_NAME"]
@@ -93,8 +94,8 @@ func TestCreateToolForTask_GlobalVarsHonoured(t *testing.T) {
 	s := loadServerFromFixture(t, "override-vars")
 	root := onlyRoot(t, s)
 
-	taskDef := lookupTask(t, root.taskfile, "deploy")
-	tool := createToolForTask(root.taskfile, "", "deploy", taskDef)
+	taskDef := lookupTask(t, root.Taskfile, "deploy")
+	tool := createToolForTask(root.Taskfile, "", "deploy", taskDef)
 
 	props := schemaProperties(t, tool)
 	if len(props) != 1 {
@@ -122,8 +123,8 @@ func TestCreateToolForTask_GlobalVarWithoutStaticDefault(t *testing.T) {
 	s := loadServerFromFixture(t, "requires")
 	root := onlyRoot(t, s)
 
-	taskDef := lookupTask(t, root.taskfile, "release")
-	tool := createToolForTask(root.taskfile, "", "release", taskDef)
+	taskDef := lookupTask(t, root.Taskfile, "release")
+	tool := createToolForTask(root.Taskfile, "", "release", taskDef)
 
 	props := schemaProperties(t, tool)
 	prop, ok := props["GIT_SHA"].(map[string]any)
@@ -142,8 +143,8 @@ func TestCreateToolForTask_RequiresVar(t *testing.T) {
 	s := loadServerFromFixture(t, "requires")
 	root := onlyRoot(t, s)
 
-	taskDef := lookupTask(t, root.taskfile, "release")
-	tool := createToolForTask(root.taskfile, "", "release", taskDef)
+	taskDef := lookupTask(t, root.Taskfile, "release")
+	tool := createToolForTask(root.Taskfile, "", "release", taskDef)
 
 	props := schemaProperties(t, tool)
 	prop, ok := props["VERSION"].(map[string]any)
@@ -170,8 +171,8 @@ func TestCreateToolForTask_RequiresEnum(t *testing.T) {
 	s := loadServerFromFixture(t, "requires")
 	root := onlyRoot(t, s)
 
-	taskDef := lookupTask(t, root.taskfile, "release")
-	tool := createToolForTask(root.taskfile, "", "release", taskDef)
+	taskDef := lookupTask(t, root.Taskfile, "release")
+	tool := createToolForTask(root.Taskfile, "", "release", taskDef)
 
 	props := schemaProperties(t, tool)
 	prop, ok := props["CHANNEL"].(map[string]any)
@@ -303,8 +304,8 @@ func TestCreateToolForTask_Namespaced(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.taskName, func(t *testing.T) {
-			taskDef := lookupTask(t, root.taskfile, tt.taskName)
-			tool := createToolForTask(root.taskfile, "", tt.taskName, taskDef)
+			taskDef := lookupTask(t, root.Taskfile, tt.taskName)
+			tool := createToolForTask(root.Taskfile, "", tt.taskName, taskDef)
 
 			if tool.Name != tt.wantTool {
 				t.Errorf("Name = %q, want %q", tool.Name, tt.wantTool)
@@ -321,8 +322,8 @@ func TestCreateToolForTask_Wildcard(t *testing.T) {
 	root := onlyRoot(t, s)
 
 	t.Run("single wildcard", func(t *testing.T) {
-		taskDef := lookupTask(t, root.taskfile, "start:*")
-		tool := createToolForTask(root.taskfile, "", "start:*", taskDef)
+		taskDef := lookupTask(t, root.Taskfile, "start:*")
+		tool := createToolForTask(root.Taskfile, "", "start:*", taskDef)
 
 		if tool.Name != "start" {
 			t.Errorf("Name = %q, want %q", tool.Name, "start")
@@ -354,8 +355,8 @@ func TestCreateToolForTask_Wildcard(t *testing.T) {
 	})
 
 	t.Run("double wildcard", func(t *testing.T) {
-		taskDef := lookupTask(t, root.taskfile, "deploy:*:*")
-		tool := createToolForTask(root.taskfile, "", "deploy:*:*", taskDef)
+		taskDef := lookupTask(t, root.Taskfile, "deploy:*:*")
+		tool := createToolForTask(root.Taskfile, "", "deploy:*:*", taskDef)
 
 		if tool.Name != "deploy" {
 			t.Errorf("Name = %q, want %q", tool.Name, "deploy")
@@ -386,8 +387,8 @@ func TestCreateToolForTask_LeadingDot(t *testing.T) {
 	s := loadServerFromFixture(t, "leading-dot")
 	root := onlyRoot(t, s)
 
-	taskDef := lookupTask(t, root.taskfile, "uv:.venv")
-	tool := createToolForTask(root.taskfile, "", "uv:.venv", taskDef)
+	taskDef := lookupTask(t, root.Taskfile, "uv:.venv")
+	tool := createToolForTask(root.Taskfile, "", "uv:.venv", taskDef)
 
 	if tool.Name != "uv_.venv" {
 		t.Errorf("Name = %q, want %q", tool.Name, "uv_.venv")
@@ -535,19 +536,19 @@ func TestBuildToolPlan_HandlerSelectsPrefixedRootTool(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	frontendRoot, err := loadRoot(t.Context(), frontendDir)
+	frontendRoot, err := roots.Load(t.Context(), frontendDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	backendRoot, err := loadRoot(t.Context(), backendDir)
+	backendRoot, err := roots.Load(t.Context(), backendDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	s := &Server{
-		roots: map[string]*Root{
-			dirToURI(frontendDir): frontendRoot,
-			dirToURI(backendDir):  backendRoot,
+		roots: map[string]*roots.Root{
+			roots.DirToURI(frontendDir): frontendRoot,
+			roots.DirToURI(backendDir):  backendRoot,
 		},
 	}
 
@@ -680,19 +681,19 @@ func TestBuildToolPlan_ExcludesCollidingToolNamesAcrossRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r1, err := loadRoot(t.Context(), dir1)
+	r1, err := roots.Load(t.Context(), dir1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r2, err := loadRoot(t.Context(), dir2)
+	r2, err := roots.Load(t.Context(), dir2)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	s := &Server{
-		roots: map[string]*Root{
-			dirToURI(dir1): r1,
-			dirToURI(dir2): r2,
+		roots: map[string]*roots.Root{
+			roots.DirToURI(dir1): r1,
+			roots.DirToURI(dir2): r2,
 		},
 	}
 
@@ -719,13 +720,13 @@ func TestBuildToolPlan_ExcludesCollidingToolNamesWithinRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	root, err := loadRoot(t.Context(), dir)
+	root, err := roots.Load(t.Context(), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	s := &Server{
-		roots: map[string]*Root{dirToURI(dir): root},
+		roots: map[string]*roots.Root{roots.DirToURI(dir): root},
 	}
 
 	plan := buildToolPlan(snapshotFromServer(s), testLogger())
@@ -747,13 +748,13 @@ func TestBuildToolPlan_NoTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	root, err := loadRoot(t.Context(), dir)
+	root, err := roots.Load(t.Context(), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	s := &Server{
-		roots: map[string]*Root{dirToURI(dir): root},
+		roots: map[string]*roots.Root{roots.DirToURI(dir): root},
 	}
 
 	plan := buildToolPlan(snapshotFromServer(s), testLogger())
@@ -770,8 +771,8 @@ func TestCreateToolForTask_WithPrefix(t *testing.T) {
 	s := loadServerFromFixture(t, "basic")
 	root := onlyRoot(t, s)
 
-	taskDef := lookupTask(t, root.taskfile, "greet")
-	tool := createToolForTask(root.taskfile, "myproject", "greet", taskDef)
+	taskDef := lookupTask(t, root.Taskfile, "greet")
+	tool := createToolForTask(root.Taskfile, "myproject", "greet", taskDef)
 
 	if tool.Name != "myproject_greet" {
 		t.Errorf("Name = %q, want %q", tool.Name, "myproject_greet")
@@ -784,10 +785,10 @@ func TestCreateToolForTask_WithPrefix(t *testing.T) {
 func TestCreateToolForTask_WithPrefix_EnforcesMaxLength(t *testing.T) {
 	s := loadServerFromFixture(t, "basic")
 	root := onlyRoot(t, s)
-	taskDef := lookupTask(t, root.taskfile, "greet")
+	taskDef := lookupTask(t, root.Taskfile, "greet")
 	prefix := strings.Repeat("project", 20)
 
-	tool := createToolForTask(root.taskfile, prefix, "greet", taskDef)
+	tool := createToolForTask(root.Taskfile, prefix, "greet", taskDef)
 
 	if len(tool.Name) != maxToolNameLength {
 		t.Fatalf("len(tool.Name) = %d, want %d", len(tool.Name), maxToolNameLength)
@@ -859,7 +860,7 @@ func TestBuildToolPlan_FromSnapshot(t *testing.T) {
 	snap := toolStateSnapshot{
 		generation: 42,
 		roots: map[string]toolRootSnapshot{
-			"file:///test": {workdir: root.workdir, taskfile: root.taskfile},
+			"file:///test": {workdir: root.Workdir, taskfile: root.Taskfile},
 		},
 	}
 
@@ -921,7 +922,7 @@ func TestSyncTools_OrphanedToolOnConcurrentSync(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	root, err := loadRoot(t.Context(), dir)
+	root, err := roots.Load(t.Context(), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -929,9 +930,9 @@ func TestSyncTools_OrphanedToolOnConcurrentSync(t *testing.T) {
 	mcpSrv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
 	tracker := newTrackingRegistry(mcpSrv)
 
-	uri := dirToURI(dir)
+	uri := roots.DirToURI(dir)
 	s := &Server{
-		roots:           map[string]*Root{uri: root},
+		roots:           map[string]*roots.Root{uri: root},
 		toolRegistry:    tracker,
 		registeredTools: make(map[string]registeredTool),
 	}
@@ -967,7 +968,7 @@ func TestSyncTools_OrphanedToolOnConcurrentSync(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(singleTaskDir, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  taskA:\n    desc: Task A\n    cmds:\n      - echo A\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	newRoot, err := loadRoot(t.Context(), singleTaskDir)
+	newRoot, err := roots.Load(t.Context(), singleTaskDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -979,7 +980,7 @@ func TestSyncTools_OrphanedToolOnConcurrentSync(t *testing.T) {
 	maps.Copy(oldTools, s.registeredTools)
 
 	// Simulate concurrent mutation while G1 is "planning".
-	newURI := dirToURI(singleTaskDir)
+	newURI := roots.DirToURI(singleTaskDir)
 	delete(s.roots, uri)
 	s.roots[newURI] = newRoot
 	s.generation++
@@ -1050,7 +1051,7 @@ func TestSnapshotToolState_IsolatedFromRootMutation(t *testing.T) {
 	s.mu.Lock()
 	snap := s.snapshotToolStateLocked()
 	// Simulate disableRootToolsLocked clearing the live root in place.
-	root.taskfile = nil
+	root.Taskfile = nil
 	s.generation++
 	s.mu.Unlock()
 

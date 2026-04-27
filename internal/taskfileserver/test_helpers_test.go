@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-task/task/v3/taskfile/ast"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/rsclarke/mcp-taskfile-server/internal/roots"
 )
 
 // testLogger returns a logger that discards all output. Tests that need
@@ -32,19 +33,19 @@ func loadServerFromFixture(t *testing.T, name string) *Server {
 	_, filename, _, _ := runtime.Caller(0)
 	dir := filepath.Join(filepath.Dir(filename), "..", "..", "testdata", name)
 
-	root, err := loadRoot(t.Context(), dir)
+	root, err := roots.Load(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("failed to load root for fixture %q: %v", name, err)
 	}
 
-	uri := dirToURI(dir)
+	uri := roots.DirToURI(dir)
 	s := New()
 	s.roots[uri] = root
 	return s
 }
 
 // onlyRoot returns the single Root from a server, or fails the test.
-func onlyRoot(t *testing.T, s *Server) *Root {
+func onlyRoot(t *testing.T, s *Server) *roots.Root {
 	t.Helper()
 	if len(s.roots) != 1 {
 		t.Fatalf("expected 1 root, got %d", len(s.roots))
@@ -128,8 +129,8 @@ func snapshotFromServer(s *Server) toolStateSnapshot {
 	}
 	for uri, root := range s.roots {
 		snap.roots[uri] = toolRootSnapshot{
-			workdir:  root.workdir,
-			taskfile: root.taskfile,
+			workdir:  root.Workdir,
+			taskfile: root.Taskfile,
 		}
 	}
 	return snap
@@ -171,11 +172,11 @@ func newTempServer(t *testing.T, taskfileContent []byte) *Server {
 // with a real *mcp.Server and initial syncTools.
 func newServerForDir(t *testing.T, dir string) *Server {
 	t.Helper()
-	root, err := loadRoot(t.Context(), dir)
+	root, err := roots.Load(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("loadRoot: %v", err)
 	}
-	uri := dirToURI(dir)
+	uri := roots.DirToURI(dir)
 	mcpSrv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
 	s := New()
 	s.toolRegistry = mcpSrv
