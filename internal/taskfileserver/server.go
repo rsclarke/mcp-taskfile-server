@@ -13,10 +13,12 @@ import (
 
 // New creates a new Taskfile MCP server.
 func New() *Server {
-	return &Server{
+	s := &Server{
 		roots:           make(map[string]*Root),
 		registeredTools: make(map[string]registeredTool),
 	}
+	s.watchers = newWatcherManager(s.runRootWatcher)
+	return s
 }
 
 // SetToolRegistry attaches the registry used for tool registration updates.
@@ -108,9 +110,9 @@ func (s *Server) snapshotExistingRoots() map[string]struct{} {
 // desired list are NOT removed. It is an error for the resulting root set
 // to be empty.
 //
-// Side effects (syncTools, restartWatchers, future per-root watcher
-// notifications) are NOT performed here; the caller drives them using the
-// returned reconcileResult after s.mu has been released.
+// Side effects (syncTools, watcher start/stop) are NOT performed here;
+// the caller drives them using the returned reconcileResult after s.mu
+// has been released.
 func (s *Server) initializeRoots(ctx context.Context, roots []*mcp.Root) (reconcileResult, error) {
 	existing := s.snapshotExistingRoots()
 	_, loadedRoots := loadDesired(ctx, roots, existing)
@@ -141,9 +143,9 @@ func (s *Server) initializeRoots(ctx context.Context, roots []*mcp.Root) (reconc
 // new roots are loaded and added. An empty roots list is allowed and
 // results in an empty server root set.
 //
-// Side effects (syncTools, restartWatchers, future per-root watcher
-// notifications) are NOT performed here; the caller drives them using the
-// returned reconcileResult after s.mu has been released.
+// Side effects (syncTools, watcher start/stop) are NOT performed here;
+// the caller drives them using the returned reconcileResult after s.mu
+// has been released.
 func (s *Server) replaceRoots(ctx context.Context, roots []*mcp.Root) reconcileResult {
 	existing := s.snapshotExistingRoots()
 	desiredURIs, loadedRoots := loadDesired(ctx, roots, existing)
@@ -182,13 +184,14 @@ func (s *Server) initializeRootsFromSession(ctx context.Context, session *mcp.Se
 		return err
 	}
 
-	if _, err := s.initializeRoots(ctx, roots); err != nil {
+	res, err := s.initializeRoots(ctx, roots)
+	if err != nil {
 		return err
 	}
 
 	syncErr := s.syncTools()
 	if syncErr == nil {
-		s.restartWatchers(ctx)
+		s.watchers.apply(ctx, res.added, res.removed)
 	}
 	return syncErr
 }
@@ -220,8 +223,9 @@ func (s *Server) HandleInitialized(ctx context.Context, req *mcp.InitializedRequ
 }
 
 // HandleRootsChanged is called when the client sends roots/list_changed.
-// It always restarts the file watchers (regardless of whether syncTools
-// succeeds) so the watcher set continues to track the live root membership.
+// It applies the per-root watcher diff regardless of whether syncTools
+// succeeds, so the watcher set continues to track the live root
+// membership.
 func (s *Server) HandleRootsChanged(ctx context.Context, req *mcp.RootsListChangedRequest) {
 	rootRes, err := req.Session.ListRoots(ctx, nil)
 	if err != nil {
@@ -229,10 +233,10 @@ func (s *Server) HandleRootsChanged(ctx context.Context, req *mcp.RootsListChang
 		return
 	}
 
-	_ = s.replaceRoots(ctx, rootRes.Roots)
+	res := s.replaceRoots(ctx, rootRes.Roots)
 
 	if err := s.syncTools(); err != nil {
 		log.Printf("failed to sync tools after roots change: %v", err)
 	}
-	s.restartWatchers(ctx)
+	s.watchers.apply(ctx, res.added, res.removed)
 }

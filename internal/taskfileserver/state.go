@@ -1,7 +1,6 @@
 package taskfileserver
 
 import (
-	"context"
 	"sync"
 
 	"github.com/go-task/task/v3/taskfile/ast"
@@ -12,7 +11,8 @@ import (
 // into Server.roots its fields are treated as read-only; mutations are
 // performed by replacing the pointer in the map rather than writing
 // through the existing value, so concurrent readers (snapshots, watchers)
-// always observe a consistent state.
+// always observe a consistent state. *Root values therefore must NOT be
+// mutated outside roots.go.
 type Root struct {
 	taskfile       *ast.Taskfile
 	workdir        string
@@ -29,21 +29,22 @@ type toolRegistry interface {
 // Server represents our MCP server for Taskfile.yml.
 //
 // The mu mutex protects in-memory mutations of roots, registeredTools,
-// generation, and the watcher bookkeeping fields (watchCancel, watchDone,
-// shuttingDown). Functions called while holding mu must not block,
+// and generation. Functions called while holding mu must not block,
 // perform I/O, or interact with goroutines that themselves acquire mu.
 // Heavier lifecycle work (loading Taskfiles, cancelling watchers,
 // notifying the MCP registry) MUST be driven by callers after mu has
 // been released.
+//
+// The watcher set is owned by watchers, which has its own internal lock
+// and lifecycle that is independent of mu. Callers must not hold mu
+// while invoking watcher methods.
 type Server struct {
 	roots           map[string]*Root
 	toolRegistry    toolRegistry
 	registeredTools map[string]registeredTool
+	watchers        *watcherManager
 	mu              sync.Mutex
 	generation      uint64
-	watchCancel     context.CancelFunc
-	watchDone       chan struct{}
-	shuttingDown    bool
 }
 
 // toolRootSnapshot is an immutable per-root view captured under lock so

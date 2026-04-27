@@ -60,9 +60,7 @@ func TestWatchTaskfiles_ReloadsOnChange(t *testing.T) {
 
 	ctx := t.Context()
 
-	go func() {
-		_ = s.watchTaskfiles(ctx, snapshotRoots(s))
-	}()
+	startTestWatchers(ctx, s)
 
 	// Give the watcher time to start.
 	time.Sleep(100 * time.Millisecond)
@@ -116,9 +114,7 @@ func TestWatchTaskfiles_IgnoresUnincludedChildTaskfile(t *testing.T) {
 	initialTaskfile := root.taskfile
 	ctx := t.Context()
 
-	go func() {
-		_ = s.watchTaskfiles(ctx, snapshotRoots(s))
-	}()
+	startTestWatchers(ctx, s)
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -152,9 +148,7 @@ func TestWatchTaskfiles_ReloadsOnIncludedTaskfileChange(t *testing.T) {
 	s := newServerForDir(t, dir)
 	ctx := t.Context()
 
-	go func() {
-		_ = s.watchTaskfiles(ctx, snapshotRoots(s))
-	}()
+	startTestWatchers(ctx, s)
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -204,9 +198,7 @@ func TestWatchTaskfiles_ReloadsOnTransitiveIncludedTaskfileChange(t *testing.T) 
 	s := newServerForDir(t, dir)
 	ctx := t.Context()
 
-	go func() {
-		_ = s.watchTaskfiles(ctx, snapshotRoots(s))
-	}()
+	startTestWatchers(ctx, s)
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -247,9 +239,7 @@ func TestWatchTaskfiles_IgnoresNonTaskfile(t *testing.T) {
 
 	ctx := t.Context()
 
-	go func() {
-		_ = s.watchTaskfiles(ctx, snapshotRoots(s))
-	}()
+	startTestWatchers(ctx, s)
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -270,19 +260,20 @@ func TestWatchTaskfiles_IgnoresNonTaskfile(t *testing.T) {
 	}
 }
 
-func TestWatchTaskfiles_CancelStops(t *testing.T) {
+func TestWatchRootTaskfiles_CancelStops(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "Taskfile.yml"), []byte("version: '3'\ntasks:\n  x:\n    cmds:\n      - echo x\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	s := newServerForDir(t, dir)
+	uri := onlyRootURI(t, s)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 
 	go func() {
-		done <- s.watchTaskfiles(ctx, snapshotRoots(s))
+		done <- s.watchRootTaskfiles(ctx, uri)
 	}()
 
 	time.Sleep(50 * time.Millisecond)
@@ -291,10 +282,10 @@ func TestWatchTaskfiles_CancelStops(t *testing.T) {
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Errorf("watchTaskfiles returned error: %v", err)
+			t.Errorf("watchRootTaskfiles returned error: %v", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("watchTaskfiles did not stop after context cancellation")
+		t.Fatal("watchRootTaskfiles did not stop after context cancellation")
 	}
 }
 
@@ -307,31 +298,26 @@ func TestServerShutdown_StopsActiveWatchersAndIsIdempotent(t *testing.T) {
 	s := newServerForDir(t, dir)
 	s.restartWatchers(context.Background())
 
-	s.mu.Lock()
-	watchDone := s.watchDone
-	s.mu.Unlock()
-	if watchDone == nil {
-		t.Fatal("expected active watcher generation")
+	if got := s.watchers.active(); got == 0 {
+		t.Fatalf("expected at least one active watcher, got %d", got)
 	}
 
-	s.Shutdown()
-
+	shutdownDone := make(chan struct{})
+	go func() {
+		s.Shutdown()
+		close(shutdownDone)
+	}()
 	select {
-	case <-watchDone:
+	case <-shutdownDone:
 	case <-time.After(2 * time.Second):
-		t.Fatal("Shutdown did not wait for watcher generation to stop")
+		t.Fatal("Shutdown did not return in time")
 	}
 
-	s.mu.Lock()
-	watchCancel := s.watchCancel
-	remainingDone := s.watchDone
-	shuttingDown := s.shuttingDown
-	s.mu.Unlock()
-	if watchCancel != nil || remainingDone != nil {
-		t.Fatal("expected watcher state to be cleared after Shutdown")
+	if got := s.watchers.active(); got != 0 {
+		t.Fatalf("expected 0 active watchers after Shutdown, got %d", got)
 	}
-	if !shuttingDown {
-		t.Fatal("expected server to reject watcher restarts after Shutdown")
+	if !s.watchers.isShuttingDown() {
+		t.Fatal("expected watcher manager to remain in shutting-down state after Shutdown")
 	}
 
 	done := make(chan struct{})
@@ -339,7 +325,6 @@ func TestServerShutdown_StopsActiveWatchersAndIsIdempotent(t *testing.T) {
 		s.Shutdown()
 		close(done)
 	}()
-
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
@@ -348,10 +333,8 @@ func TestServerShutdown_StopsActiveWatchersAndIsIdempotent(t *testing.T) {
 
 	s.restartWatchers(context.Background())
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.watchCancel != nil || s.watchDone != nil {
-		t.Fatal("restartWatchers should be a no-op after Shutdown")
+	if got := s.watchers.active(); got != 0 {
+		t.Fatalf("restartWatchers should be a no-op after Shutdown, got %d active watchers", got)
 	}
 }
 
@@ -447,9 +430,7 @@ func TestWatchTaskfiles_DebounceCoalesces(t *testing.T) {
 	// appears without intermediate states lingering.
 	ctx := t.Context()
 
-	go func() {
-		_ = s.watchTaskfiles(ctx, snapshotRoots(s))
-	}()
+	startTestWatchers(ctx, s)
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -489,9 +470,7 @@ func TestWatchTaskfiles_InvalidRootTaskfileRemovesToolsUntilRestored(t *testing.
 
 	ctx := t.Context()
 
-	go func() {
-		_ = s.watchTaskfiles(ctx, snapshotRoots(s))
-	}()
+	startTestWatchers(ctx, s)
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -536,9 +515,7 @@ func TestWatchTaskfiles_DeletedRootTaskfileRemovesToolsUntilRestored(t *testing.
 
 	ctx := t.Context()
 
-	go func() {
-		_ = s.watchTaskfiles(ctx, snapshotRoots(s))
-	}()
+	startTestWatchers(ctx, s)
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -658,9 +635,7 @@ func TestWatchTaskfiles_NewSubdirectory(t *testing.T) {
 
 	ctx := t.Context()
 
-	go func() {
-		_ = s.watchTaskfiles(ctx, snapshotRoots(s))
-	}()
+	startTestWatchers(ctx, s)
 
 	time.Sleep(100 * time.Millisecond)
 

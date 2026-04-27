@@ -1,6 +1,7 @@
 package taskfileserver
 
 import (
+	"context"
 	"encoding/json"
 	"maps"
 	"os"
@@ -29,9 +30,9 @@ func loadServerFromFixture(t *testing.T, name string) *Server {
 	}
 
 	uri := dirToURI(dir)
-	return &Server{
-		roots: map[string]*Root{uri: root},
-	}
+	s := New()
+	s.roots[uri] = root
+	return s
 }
 
 // onlyRoot returns the single Root from a server, or fails the test.
@@ -64,7 +65,6 @@ func newTestServer(t *testing.T, fixture string) *Server {
 	s := loadServerFromFixture(t, fixture)
 	mcpSrv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
 	s.toolRegistry = mcpSrv
-	s.registeredTools = make(map[string]registeredTool)
 	return s
 }
 
@@ -127,13 +127,25 @@ func snapshotFromServer(s *Server) toolStateSnapshot {
 	return snap
 }
 
-// snapshotRoots returns a slice of root URIs for use with watchTaskfiles.
+// snapshotRoots returns a slice of canonical root URIs.
 func snapshotRoots(s *Server) []string {
 	uris := make([]string, 0, len(s.roots))
 	for uri := range s.roots {
 		uris = append(uris, uri)
 	}
 	return uris
+}
+
+// startTestWatchers spawns a per-root watcher goroutine for every loaded
+// root. It mimics what the watcherManager does on a normal startup, but
+// without going through the manager so tests can observe the raw
+// watchRootTaskfiles loop.
+func startTestWatchers(ctx context.Context, s *Server) {
+	for _, uri := range snapshotRoots(s) {
+		go func(uri string) {
+			_ = s.watchRootTaskfiles(ctx, uri)
+		}(uri)
+	}
 }
 
 // newTempServer creates a Server backed by a temp directory containing
@@ -157,11 +169,9 @@ func newServerForDir(t *testing.T, dir string) *Server {
 	}
 	uri := dirToURI(dir)
 	mcpSrv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.0.0"}, nil)
-	s := &Server{
-		roots:           map[string]*Root{uri: root},
-		toolRegistry:    mcpSrv,
-		registeredTools: make(map[string]registeredTool),
-	}
+	s := New()
+	s.toolRegistry = mcpSrv
+	s.roots[uri] = root
 	if err := s.syncTools(); err != nil {
 		t.Fatalf("initial syncTools: %v", err)
 	}

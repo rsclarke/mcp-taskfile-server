@@ -13,6 +13,161 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
+// rootWatcher tracks a single per-root watcher goroutine.
+type rootWatcher struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+// watcherManager owns the lifecycle of per-root watcher goroutines. Each
+// root URI is watched by at most one goroutine; the manager spawns
+// watchers for newly added URIs and cancels watchers for removed URIs
+// without disturbing the rest. The manager has its own internal lock and
+// must be invoked without Server.mu held.
+type watcherManager struct {
+	// run executes the per-root watch loop. It receives a context that
+	// is cancelled when the watcher is stopped (via apply, reconcile, or
+	// shutdown). The function MUST return promptly after ctx is
+	// cancelled so shutdown can drain.
+	run func(ctx context.Context, uri string)
+
+	mu           sync.Mutex
+	watchers     map[string]*rootWatcher
+	shuttingDown bool
+}
+
+// newWatcherManager constructs an empty manager. run is the per-root
+// watch loop the manager will spawn for each URI.
+func newWatcherManager(run func(ctx context.Context, uri string)) *watcherManager {
+	return &watcherManager{
+		run:      run,
+		watchers: make(map[string]*rootWatcher),
+	}
+}
+
+// apply spawns watchers for URIs in added that are not already running
+// and cancels watchers for URIs in removed. The cancelled watchers exit
+// asynchronously; apply does not wait for them. baseCtx is detached via
+// context.WithoutCancel so watchers outlive the caller's request scope.
+//
+// apply is a no-op once shutdown has been called.
+func (m *watcherManager) apply(baseCtx context.Context, added, removed []string) {
+	type spawn struct {
+		uri string
+		ctx context.Context
+		w   *rootWatcher
+	}
+
+	var (
+		stopping []*rootWatcher
+		spawning []spawn
+	)
+
+	m.mu.Lock()
+	if m.shuttingDown {
+		m.mu.Unlock()
+		return
+	}
+	for _, uri := range removed {
+		if w, ok := m.watchers[uri]; ok {
+			stopping = append(stopping, w)
+			delete(m.watchers, uri)
+		}
+	}
+	parent := context.WithoutCancel(baseCtx)
+	for _, uri := range added {
+		if _, ok := m.watchers[uri]; ok {
+			continue
+		}
+		// cancel is stored in rootWatcher.cancel and invoked from
+		// apply (on removal) or shutdown; gosec cannot trace this.
+		ctx, cancel := context.WithCancel(parent) //nolint:gosec // cancel is held in rootWatcher.cancel
+		w := &rootWatcher{cancel: cancel, done: make(chan struct{})}
+		m.watchers[uri] = w
+		spawning = append(spawning, spawn{uri: uri, ctx: ctx, w: w})
+	}
+	m.mu.Unlock()
+
+	for _, w := range stopping {
+		w.cancel()
+	}
+	for _, sp := range spawning {
+		go func() {
+			defer close(sp.w.done)
+			m.run(sp.ctx, sp.uri)
+		}()
+	}
+}
+
+// reconcile diffs the running watchers against desired and applies the
+// difference. Existing watchers for URIs in desired are not disturbed.
+// reconcile is a no-op once shutdown has been called.
+func (m *watcherManager) reconcile(baseCtx context.Context, desired []string) {
+	desiredSet := make(map[string]struct{}, len(desired))
+	for _, uri := range desired {
+		desiredSet[uri] = struct{}{}
+	}
+
+	var added, removed []string
+
+	m.mu.Lock()
+	if m.shuttingDown {
+		m.mu.Unlock()
+		return
+	}
+	for uri := range m.watchers {
+		if _, ok := desiredSet[uri]; !ok {
+			removed = append(removed, uri)
+		}
+	}
+	for uri := range desiredSet {
+		if _, ok := m.watchers[uri]; !ok {
+			added = append(added, uri)
+		}
+	}
+	m.mu.Unlock()
+
+	m.apply(baseCtx, added, removed)
+}
+
+// shutdown cancels every running watcher and waits for them to exit.
+// After shutdown returns, all subsequent apply and reconcile calls are
+// no-ops. shutdown is idempotent and safe to call from multiple
+// goroutines concurrently.
+func (m *watcherManager) shutdown() {
+	m.mu.Lock()
+	if m.shuttingDown {
+		m.mu.Unlock()
+		return
+	}
+	m.shuttingDown = true
+	watchers := m.watchers
+	m.watchers = make(map[string]*rootWatcher)
+	m.mu.Unlock()
+
+	for _, w := range watchers {
+		w.cancel()
+	}
+	for _, w := range watchers {
+		<-w.done
+	}
+}
+
+// active reports the number of running watchers. Intended for tests.
+func (m *watcherManager) active() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.watchers)
+}
+
+// isShuttingDown reports whether shutdown has been called. Intended for
+// tests.
+func (m *watcherManager) isShuttingDown() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.shuttingDown
+}
+
 // rootWatchState returns copies of the current watch configuration for a root.
 func (s *Server) rootWatchState(uri string) ([]string, map[string]struct{}, bool) {
 	s.mu.Lock()
@@ -131,90 +286,38 @@ func (s *Server) watchRootTaskfiles(ctx context.Context, uri string) error {
 	}
 }
 
-// watchTaskfiles starts file watchers for the given root URIs and blocks until
-// the context is cancelled. The caller must provide URIs captured under lock.
-func (s *Server) watchTaskfiles(ctx context.Context, rootURIs []string) error {
-	var wg sync.WaitGroup
-	var firstErr error
-	var errOnce sync.Once
-
-	for _, uri := range rootURIs {
-		wg.Go(func() {
-			if err := s.watchRootTaskfiles(ctx, uri); err != nil {
-				errOnce.Do(func() { firstErr = err })
-			}
-		})
+// runRootWatcher is the watcherManager run callback. It logs and discards
+// any error returned by watchRootTaskfiles so a failed watcher does not
+// take down the manager's bookkeeping.
+func (s *Server) runRootWatcher(ctx context.Context, uri string) {
+	if err := s.watchRootTaskfiles(ctx, uri); err != nil {
+		log.Printf("file watcher for %s failed: %v", uri, err)
 	}
-
-	wg.Wait()
-	return firstErr
 }
 
-// Shutdown stops any detached watcher goroutines and waits for them to exit.
-// It is safe to call multiple times.
+// Shutdown stops every running watcher and waits for them to exit. It is
+// idempotent and safe to call multiple times. After Shutdown returns,
+// future calls into the watcher manager become no-ops.
 func (s *Server) Shutdown() {
-	s.mu.Lock()
-	if s.shuttingDown {
-		s.mu.Unlock()
-		return
-	}
-
-	s.shuttingDown = true
-	cancel := s.watchCancel
-	done := s.watchDone
-	s.watchCancel = nil
-	s.watchDone = nil
-	s.mu.Unlock()
-
-	if cancel != nil {
-		cancel()
-	}
-	if done != nil {
-		<-done
-	}
+	s.watchers.shutdown()
 }
 
-// restartWatchers cancels any running file watchers, waits for them to exit,
-// then starts new ones for all current roots. The provided ctx is
-// intentionally detached via context.WithoutCancel because callers pass
-// request-scoped contexts that are cancelled after the handler returns.
+// restartWatchers reconciles the watcher set so that one watcher is
+// running per current root. It is a thin wrapper around the per-root
+// watcher manager: existing watchers are left running, watchers for
+// removed roots are cancelled, and watchers for newly added roots are
+// spawned.
+//
+// The provided ctx is detached via context.WithoutCancel inside the
+// manager, because callers may pass request-scoped contexts that are
+// cancelled after the handler returns; watchers must outlive the request.
 func (s *Server) restartWatchers(ctx context.Context) {
 	s.mu.Lock()
-	if s.shuttingDown {
-		s.mu.Unlock()
-		return
-	}
-
-	// Capture previous watcher generation's cancel and done channel.
-	prevCancel := s.watchCancel
-	prevDone := s.watchDone
-
-	// Snapshot root URIs while we hold the lock.
 	rootURIs := make([]string, 0, len(s.roots))
 	for uri := range s.roots {
 		rootURIs = append(rootURIs, uri)
 	}
-
-	// Prepare the new watcher generation before releasing the lock.
-	// Detach from the caller's request-scoped context which is cancelled
-	// after the handler returns; the watcher must outlive the request.
-	watchCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	done := make(chan struct{})
-	s.watchCancel = cancel
-	s.watchDone = done
 	s.mu.Unlock()
 
-	if prevCancel != nil {
-		prevCancel()
-	}
-	if prevDone != nil {
-		<-prevDone
-	}
-
-	go func() {
-		defer close(done)
-		if err := s.watchTaskfiles(watchCtx, rootURIs); err != nil {
-			log.Printf("file watcher failed: %v", err)
-		}
-	}()
+	s.watchers.reconcile(ctx, rootURIs)
 }
