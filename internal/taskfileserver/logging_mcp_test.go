@@ -7,11 +7,11 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/rsclarke/mcp-taskfile-server/internal/logging"
 )
 
 // TestServer_NoMCPLoggingBeforeInitialized verifies that a freshly
@@ -192,13 +192,13 @@ func waitForMCPLoggingInstalled(t *testing.T, ts *Server) {
 }
 
 // hasMCPHandler reports whether the given handler tree contains the
-// SDK's LoggingHandler. The fanout handler stores its children in a
-// non-exported field, so we recurse via type assertion only on the
-// types we ourselves construct.
+// SDK's LoggingHandler. The fanout handler exposes its children via
+// Handlers, so we recurse via type assertion only on the types we
+// ourselves construct.
 func hasMCPHandler(h slog.Handler) bool {
 	switch v := h.(type) {
-	case *fanoutHandler:
-		return slices.ContainsFunc(v.handlers, hasMCPHandler)
+	case *logging.FanoutHandler:
+		return slices.ContainsFunc(v.Handlers(), hasMCPHandler)
 	case *mcp.LoggingHandler:
 		return true
 	default:
@@ -269,45 +269,4 @@ func decodePayload(t *testing.T, data any) map[string]any {
 		t.Fatalf("unexpected payload type %T (%v)", data, data)
 		return nil
 	}
-}
-
-// TestFanoutHandler_DispatchesToAllHandlers verifies the fanout passes
-// every record to each constituent handler.
-func TestFanoutHandler_DispatchesToAllHandlers(t *testing.T) {
-	a := &recordingHandler{}
-	b := &recordingHandler{}
-	logger := slog.New(newFanoutHandler(a, b))
-
-	logger.Warn("ping", slog.String("event", "fanout.test"))
-
-	if got := a.count(); got != 1 {
-		t.Errorf("handler a saw %d records, want 1", got)
-	}
-	if got := b.count(); got != 1 {
-		t.Errorf("handler b saw %d records, want 1", got)
-	}
-}
-
-type recordingHandler struct {
-	mu      sync.Mutex
-	records []slog.Record
-}
-
-func (h *recordingHandler) Enabled(_ context.Context, _ slog.Level) bool { return true }
-
-func (h *recordingHandler) Handle(_ context.Context, r slog.Record) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.records = append(h.records, r)
-	return nil
-}
-
-func (h *recordingHandler) WithAttrs(_ []slog.Attr) slog.Handler { return h }
-
-func (h *recordingHandler) WithGroup(_ string) slog.Handler { return h }
-
-func (h *recordingHandler) count() int {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return len(h.records)
 }

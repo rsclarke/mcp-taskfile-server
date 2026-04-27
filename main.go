@@ -4,11 +4,10 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"os"
-	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/rsclarke/mcp-taskfile-server/internal/logging"
 	"github.com/rsclarke/mcp-taskfile-server/internal/taskfileserver"
 )
 
@@ -18,45 +17,9 @@ var (
 	serverVersion = "dev"
 )
 
-// logLevelEnv names the environment variable used to configure the log
-// level. Recognised values: debug, info, warn, error (case-insensitive).
-const logLevelEnv = "MCP_TASKFILE_LOG_LEVEL"
-
-// parseLogLevel resolves the configured log level. Unrecognised or empty
-// values fall back to info.
-func parseLogLevel(raw string) slog.Level {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "debug":
-		return slog.LevelDebug
-	case "warn", "warning":
-		return slog.LevelWarn
-	case "error":
-		return slog.LevelError
-	default:
-		return slog.LevelInfo
-	}
-}
-
-// newLogger builds the structured logger used by the server. It writes
-// JSON to stderr (the only safe channel under stdio MCP transport) and
-// honours MCP_TASKFILE_LOG_LEVEL.
-//
-// MCP-side mirroring is wired in by the Server itself once the client
-// handshake completes, by extending this logger with the SDK's
-// LoggingHandler bound to the active session. The client controls
-// what reaches it via logging/setLevel, independently of stderr.
-func newLogger() *slog.Logger {
-	level := parseLogLevel(os.Getenv(logLevelEnv))
-	handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level})
-	return slog.New(handler).With(
-		slog.String("service", serverName),
-		slog.String("version", serverVersion),
-	)
-}
-
 func run() error {
 	taskfileServer := taskfileserver.New()
-	taskfileServer.SetLogger(newLogger())
+	taskfileServer.SetLogger(logging.NewLogger(serverName, serverVersion))
 	defer taskfileServer.Shutdown()
 
 	ctx, cancel := context.WithCancel(context.Background())

@@ -9,6 +9,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/rsclarke/mcp-taskfile-server/internal/logging"
 )
 
 // New creates a new Taskfile MCP server. The server starts with a
@@ -38,24 +39,6 @@ func (s *Server) SetLogger(logger *slog.Logger) {
 		logger = slog.New(slog.DiscardHandler)
 	}
 	s.logger.Store(logger)
-}
-
-// installMCPLogging extends the active logger with an MCP arm bound to
-// ss, so subsequent records reach the connected client via
-// logging/message in addition to whatever sink was previously installed
-// (typically a JSON handler on stderr).
-//
-// The SDK's LoggingHandler enforces the client-set threshold internally
-// via logging/setLevel; the stderr arm keeps its own threshold from
-// MCP_TASKFILE_LOG_LEVEL. Failures forwarding to the client are dropped
-// inside the SDK to avoid recursion through this handler.
-func (s *Server) installMCPLogging(ss *mcp.ServerSession) {
-	current := s.log()
-	mcpHandler := mcp.NewLoggingHandler(ss, &mcp.LoggingHandlerOptions{
-		LoggerName: "mcp-taskfile-server",
-	})
-	fanout := newFanoutHandler(current.Handler(), mcpHandler)
-	s.SetLogger(slog.New(fanout))
 }
 
 // isMethodNotFound reports whether err is a JSON-RPC "method not found" error,
@@ -263,7 +246,7 @@ func listClientRoots(ctx context.Context, session *mcp.ServerSession) ([]*mcp.Ro
 // Before doing any other work it extends the active logger with an MCP
 // arm bound to req.Session so subsequent log records reach the client.
 func (s *Server) HandleInitialized(ctx context.Context, req *mcp.InitializedRequest) {
-	s.installMCPLogging(req.Session)
+	s.SetLogger(logging.InstallMCP(s.log(), req.Session))
 	if err := s.initializeRootsFromSession(ctx, req.Session); err != nil {
 		s.log().Error("failed to initialize roots",
 			slog.String("event", "roots.init_failed"),
