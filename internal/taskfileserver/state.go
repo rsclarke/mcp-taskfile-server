@@ -27,6 +27,14 @@ type toolRegistry interface {
 }
 
 // Server represents our MCP server for Taskfile.yml.
+//
+// The mu mutex protects in-memory mutations of roots, registeredTools,
+// generation, and the watcher bookkeeping fields (watchCancel, watchDone,
+// shuttingDown). Functions called while holding mu must not block,
+// perform I/O, or interact with goroutines that themselves acquire mu.
+// Heavier lifecycle work (loading Taskfiles, cancelling watchers,
+// notifying the MCP registry) MUST be driven by callers after mu has
+// been released.
 type Server struct {
 	roots           map[string]*Root
 	toolRegistry    toolRegistry

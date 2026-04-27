@@ -145,7 +145,14 @@ func newUnloadedRoot(dir string) (*Root, error) {
 	}, nil
 }
 
-// unloadRoot removes and cleans up the root with the given canonical URI.
+// unloadRoot removes the root with the given canonical URI from the
+// server's in-memory map. The caller must hold s.mu.
+//
+// This function is intentionally trivial: per the s.mu invariant, anything
+// called under the lock must be non-blocking and lock-free transitively.
+// Heavier per-root cleanup (e.g. cancelling a per-root watcher and waiting
+// for it to drain) MUST be performed by the caller after s.mu has been
+// released, driven by the removed-URI list returned from replaceRoots.
 func (s *Server) unloadRoot(uri string) {
 	delete(s.roots, uri)
 }

@@ -583,9 +583,13 @@ func TestReconcileRoots_MissingInitialTaskfileLoadsWhenCreatedLater(t *testing.T
 	s.toolRegistry = noopRegistry{}
 	defer s.Shutdown()
 
-	if err := s.reconcileRoots(t.Context(), testRoots(uri), rootReconcileOptions{requireNonEmpty: true}); err != nil {
-		t.Fatalf("reconcileRoots: %v", err)
+	if _, err := s.initializeRoots(t.Context(), testRoots(uri)); err != nil {
+		t.Fatalf("initializeRoots: %v", err)
 	}
+	if err := s.syncTools(); err != nil {
+		t.Fatalf("syncTools: %v", err)
+	}
+	s.restartWatchers(t.Context())
 
 	root := onlyRoot(t, s)
 	if root.taskfile != nil {
