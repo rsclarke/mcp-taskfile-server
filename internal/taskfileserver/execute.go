@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/go-task/task/v3"
+	taskerrors "github.com/go-task/task/v3/errors"
 	"github.com/go-task/task/v3/taskfile/ast"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -113,30 +115,49 @@ func createTaskHandlerForWorkdir(workdir, taskName string) mcp.ToolHandler {
 		// Execute the task
 		taskErr := executor.Run(ctx, call)
 
-		// Collect output
-		stdoutStr := stdout.String()
-		stderrStr := stderr.String()
-
-		// Build result message
-		var result strings.Builder
-
-		if taskErr != nil {
-			fmt.Fprintf(&result, "Task '%s' failed with error: %v\n", resolvedName, taskErr)
-		} else {
-			fmt.Fprintf(&result, "Task '%s' completed successfully.\n", resolvedName)
-		}
-
-		if stdoutStr != "" {
-			result.WriteString("\nOutput:\n" + stdoutStr)
-		}
-
-		if stderrStr != "" {
-			result.WriteString("\nErrors:\n" + stderrStr)
-		}
-
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: result.String()}},
-			IsError: taskErr != nil,
-		}, nil
+		return buildTaskResult(resolvedName, taskErr, stdout.String(), stderr.String()), nil
 	}
+}
+
+// buildTaskResult assembles the structured CallToolResult for a task
+// invocation. The first content block is always a status line; stdout
+// and stderr (when non-empty) are appended as separate TextContent
+// blocks tagged with a "stream" entry in their Meta map so clients can
+// route, filter, or render them independently.
+func buildTaskResult(taskName string, taskErr error, stdoutStr, stderrStr string) *mcp.CallToolResult {
+	content := []mcp.Content{&mcp.TextContent{Text: taskStatusText(taskName, taskErr)}}
+
+	if stdoutStr != "" {
+		content = append(content, &mcp.TextContent{
+			Text: stdoutStr,
+			Meta: mcp.Meta{"stream": "stdout"},
+		})
+	}
+	if stderrStr != "" {
+		content = append(content, &mcp.TextContent{
+			Text: stderrStr,
+			Meta: mcp.Meta{"stream": "stderr"},
+		})
+	}
+
+	return &mcp.CallToolResult{
+		Content: content,
+		IsError: taskErr != nil,
+	}
+}
+
+// taskStatusText returns a one-line status summary for a task invocation.
+// On success the line reports an exit status of 0. On failure it prefers
+// the underlying task exit code from go-task's *TaskRunError, falling
+// back to the raw error message for non-exec failures (e.g. setup errors
+// surfaced by the executor).
+func taskStatusText(taskName string, taskErr error) string {
+	if taskErr == nil {
+		return fmt.Sprintf("Task `%s` exited with status 0", taskName)
+	}
+	var runErr *taskerrors.TaskRunError
+	if errors.As(taskErr, &runErr) {
+		return fmt.Sprintf("Task `%s` exited with status %d: %v", taskName, runErr.TaskExitCode(), taskErr)
+	}
+	return fmt.Sprintf("Task `%s` failed: %v", taskName, taskErr)
 }

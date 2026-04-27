@@ -116,6 +116,16 @@ executes `task deploy:api:production`.
 
 > **Breaking change**: previous releases accepted `MATCH` as a single comma-separated string (e.g. `"api,production"`). Update clients to send a JSON array of strings instead. Values may now safely contain commas.
 
+## Tool Result Shape
+
+Each task invocation returns a `CallToolResult` with up to three `TextContent` blocks so clients can render or filter streams independently:
+
+1. **Status block** (always present): a one-line summary such as `Task `build` exited with status 0`. Failing tasks surface the underlying exit code reported by `go-task` (e.g. `Task `fail` exited with status 7: ...`); non-exec failures (such as setup errors) fall back to `Task `<name>` failed: <error>`.
+2. **Stdout block** (if non-empty): the captured standard output, with `Meta: {"stream": "stdout"}`.
+3. **Stderr block** (if non-empty): the captured standard error, with `Meta: {"stream": "stderr"}`.
+
+`IsError` is set to `true` whenever the underlying task returns an error, so clients can react to failure without parsing the status line.
+
 ## MCP Integration
 
 This server implements the Model Context Protocol and can be used with any MCP-compatible client or AI assistant. The server:

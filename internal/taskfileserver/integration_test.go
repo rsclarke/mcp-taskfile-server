@@ -124,9 +124,11 @@ func TestHandleInitialized_CallToolExecutesSingleRootTool(t *testing.T) {
 		t.Fatalf("expected success, got IsError=true: %s", toolResultText(t, result))
 	}
 
-	text := toolResultText(t, result)
-	if !strings.Contains(text, "completed successfully") || !strings.Contains(text, "hello") {
-		t.Fatalf("expected successful hello output, got %q", text)
+	if status := toolStatusText(t, result); !strings.Contains(status, "exited with status 0") {
+		t.Fatalf("expected status block to report exit 0, got %q", status)
+	}
+	if stdout := toolStreamText(t, result, "stdout"); !strings.Contains(stdout, "hello") {
+		t.Fatalf("expected stdout block to contain hello, got %q", stdout)
 	}
 }
 
@@ -516,9 +518,11 @@ func TestHandleRootsChanged_TransitionToUnprefixedCallTool(t *testing.T) {
 		t.Fatalf("expected success, got IsError=true: %s", toolResultText(t, result))
 	}
 
-	text := toolResultText(t, result)
-	if !strings.Contains(text, "completed successfully") || !strings.Contains(text, "two") {
-		t.Fatalf("expected successful task2 output, got %q", text)
+	if status := toolStatusText(t, result); !strings.Contains(status, "exited with status 0") {
+		t.Fatalf("expected status block to report exit 0, got %q", status)
+	}
+	if stdout := toolStreamText(t, result, "stdout"); !strings.Contains(stdout, "two") {
+		t.Fatalf("expected stdout block to contain task2 output, got %q", stdout)
 	}
 
 	ts.mu.Lock()

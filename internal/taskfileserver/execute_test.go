@@ -25,21 +25,21 @@ func TestCreateTaskHandlerForWorkdir_WildcardMATCH(t *testing.T) {
 			taskName:    "start:*",
 			toolName:    "start",
 			arguments:   map[string]any{"MATCH": []string{"web"}},
-			wantSubstrs: []string{"completed successfully", "web"},
+			wantSubstrs: []string{"exited with status 0", "web"},
 		},
 		{
 			name:        "multi wildcard success",
 			taskName:    "deploy:*:*",
 			toolName:    "deploy",
 			arguments:   map[string]any{"MATCH": []string{"api", "production"}},
-			wantSubstrs: []string{"completed successfully", "api", "production"},
+			wantSubstrs: []string{"exited with status 0", "api", "production"},
 		},
 		{
 			name:        "value containing comma is preserved",
 			taskName:    "start:*",
 			toolName:    "start",
 			arguments:   map[string]any{"MATCH": []string{"a,b"}},
-			wantSubstrs: []string{"completed successfully", "a,b"},
+			wantSubstrs: []string{"exited with status 0", "a,b"},
 		},
 		{
 			name:        "missing MATCH",
@@ -131,5 +131,83 @@ func TestCreateTaskHandlerForWorkdir_InvalidArguments(t *testing.T) {
 	text := toolResultText(t, result)
 	if !strings.Contains(text, "Failed to parse") {
 		t.Errorf("expected parse error message, got %q", text)
+	}
+}
+
+func TestCreateTaskHandlerForWorkdir_StructuredSuccessContent(t *testing.T) {
+	s := newTempServer(t, []byte("version: '3'\ntasks:\n  noisy:\n    desc: Emit on both streams\n    cmds:\n      - sh -c 'echo out-line; echo err-line 1>&2'\n"))
+	root := onlyRoot(t, s)
+
+	handler := createTaskHandlerForWorkdir(root.workdir, "noisy")
+	result := callToolHandler(t, handler, "noisy", nil)
+
+	if result.IsError {
+		t.Fatalf("expected success, got IsError=true: %s", toolResultText(t, result))
+	}
+	if got, want := len(result.Content), 3; got != want {
+		t.Fatalf("expected %d content blocks (status, stdout, stderr), got %d", want, got)
+	}
+
+	status := toolStatusText(t, result)
+	if !strings.Contains(status, "Task `noisy` exited with status 0") {
+		t.Errorf("status block %q does not match expected exit-0 line", status)
+	}
+
+	stdout := toolStreamText(t, result, "stdout")
+	if !strings.Contains(stdout, "out-line") {
+		t.Errorf("stdout block %q does not contain expected output", stdout)
+	}
+	if strings.Contains(stdout, "err-line") {
+		t.Errorf("stdout block leaked stderr content: %q", stdout)
+	}
+
+	stderr := toolStreamText(t, result, "stderr")
+	if !strings.Contains(stderr, "err-line") {
+		t.Errorf("stderr block %q does not contain expected error output", stderr)
+	}
+	if strings.Contains(stderr, "out-line") {
+		t.Errorf("stderr block leaked stdout content: %q", stderr)
+	}
+}
+
+func TestCreateTaskHandlerForWorkdir_StructuredFailureContent(t *testing.T) {
+	s := newTempServer(t, []byte("version: '3'\ntasks:\n  fail:\n    desc: Fail with both streams\n    cmds:\n      - sh -c 'echo before-fail; echo bad-news 1>&2; exit 7'\n"))
+	root := onlyRoot(t, s)
+
+	handler := createTaskHandlerForWorkdir(root.workdir, "fail")
+	result := callToolHandler(t, handler, "fail", nil)
+
+	if !result.IsError {
+		t.Fatalf("expected IsError=true for failing task, got success: %s", toolResultText(t, result))
+	}
+
+	status := toolStatusText(t, result)
+	if !strings.Contains(status, "Task `fail` exited with status 7") {
+		t.Errorf("expected status block to surface exit code 7, got %q", status)
+	}
+
+	if stdout := toolStreamText(t, result, "stdout"); !strings.Contains(stdout, "before-fail") {
+		t.Errorf("expected stdout block to contain pre-failure output, got %q", stdout)
+	}
+	if stderr := toolStreamText(t, result, "stderr"); !strings.Contains(stderr, "bad-news") {
+		t.Errorf("expected stderr block to contain failing command stderr, got %q", stderr)
+	}
+}
+
+func TestCreateTaskHandlerForWorkdir_StructuredSilentSuccess(t *testing.T) {
+	s := newTempServer(t, []byte("version: '3'\ntasks:\n  quiet:\n    desc: A task with no output\n    cmds:\n      - 'true'\n"))
+	root := onlyRoot(t, s)
+
+	handler := createTaskHandlerForWorkdir(root.workdir, "quiet")
+	result := callToolHandler(t, handler, "quiet", nil)
+
+	if result.IsError {
+		t.Fatalf("expected success, got IsError=true: %s", toolResultText(t, result))
+	}
+	if got, want := len(result.Content), 1; got != want {
+		t.Fatalf("expected %d content blocks (status only) when streams are empty, got %d", want, got)
+	}
+	if status := toolStatusText(t, result); !strings.Contains(status, "exited with status 0") {
+		t.Errorf("expected status block to report exit 0, got %q", status)
 	}
 }

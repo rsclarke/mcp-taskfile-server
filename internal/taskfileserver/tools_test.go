@@ -444,9 +444,11 @@ func TestBuildToolPlan_HandlerExecutesSelectedTool(t *testing.T) {
 		t.Fatalf("expected success, got IsError=true: %s", toolResultText(t, result))
 	}
 
-	text := toolResultText(t, result)
-	if !strings.Contains(text, "completed successfully") || !strings.Contains(text, "hello") {
-		t.Fatalf("expected successful greet output, got %q", text)
+	if status := toolStatusText(t, result); !strings.Contains(status, "exited with status 0") {
+		t.Fatalf("expected status block to report exit 0, got %q", status)
+	}
+	if stdout := toolStreamText(t, result, "stdout"); !strings.Contains(stdout, "hello") {
+		t.Fatalf("expected stdout block to contain hello, got %q", stdout)
 	}
 }
 
@@ -484,9 +486,12 @@ func TestBuildToolPlan_HandlerReportsTaskFailure(t *testing.T) {
 		t.Fatal("expected IsError=true for a failing task")
 	}
 
-	text := toolResultText(t, result)
-	if !strings.Contains(text, "failed") {
-		t.Fatalf("expected failure message, got %q", text)
+	status := toolStatusText(t, result)
+	if !strings.Contains(status, "exited with status") {
+		t.Fatalf("expected status block to report exit status, got %q", status)
+	}
+	if strings.Contains(status, "exited with status 0") {
+		t.Fatalf("failing task should not report status 0, got %q", status)
 	}
 }
 

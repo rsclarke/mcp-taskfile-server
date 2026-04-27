@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -230,18 +231,62 @@ func callToolHandler(t *testing.T, handler mcp.ToolHandler, name string, argumen
 	return result
 }
 
+// toolResultText concatenates the text from every TextContent block in a
+// CallToolResult, separated by newlines. It is used by tests that want to
+// substring-match across the structured status / stdout / stderr blocks
+// without caring which block produced the match.
 func toolResultText(t *testing.T, result *mcp.CallToolResult) string {
 	t.Helper()
 
-	if len(result.Content) != 1 {
-		t.Fatalf("expected exactly 1 content item, got %d", len(result.Content))
+	if len(result.Content) == 0 {
+		t.Fatal("expected at least 1 content item, got 0")
 	}
 
+	parts := make([]string, 0, len(result.Content))
+	for i, c := range result.Content {
+		text, ok := c.(*mcp.TextContent)
+		if !ok {
+			t.Fatalf("expected TextContent at index %d, got %T", i, c)
+		}
+		parts = append(parts, text.Text)
+	}
+	return strings.Join(parts, "\n")
+}
+
+// toolStreamText returns the concatenated text from TextContent blocks
+// tagged with Meta["stream"] == stream (e.g. "stdout", "stderr"). Returns
+// the empty string if no such block exists.
+func toolStreamText(t *testing.T, result *mcp.CallToolResult, stream string) string {
+	t.Helper()
+
+	var parts []string
+	for i, c := range result.Content {
+		text, ok := c.(*mcp.TextContent)
+		if !ok {
+			t.Fatalf("expected TextContent at index %d, got %T", i, c)
+		}
+		if text.Meta == nil {
+			continue
+		}
+		if got, _ := text.Meta["stream"].(string); got == stream {
+			parts = append(parts, text.Text)
+		}
+	}
+	return strings.Join(parts, "")
+}
+
+// toolStatusText returns the text from the first content block, which by
+// convention carries the status summary line for a task invocation.
+func toolStatusText(t *testing.T, result *mcp.CallToolResult) string {
+	t.Helper()
+
+	if len(result.Content) == 0 {
+		t.Fatal("expected at least 1 content item, got 0")
+	}
 	text, ok := result.Content[0].(*mcp.TextContent)
 	if !ok {
-		t.Fatalf("expected TextContent, got %T", result.Content[0])
+		t.Fatalf("expected first content to be TextContent, got %T", result.Content[0])
 	}
-
 	return text.Text
 }
 
