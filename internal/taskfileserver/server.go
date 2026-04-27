@@ -4,18 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// New creates a new Taskfile MCP server.
+// New creates a new Taskfile MCP server. The server starts with a
+// silent logger; callers should override it via SetLogger before Run.
 func New() *Server {
 	s := &Server{
 		roots:           make(map[string]*Root),
 		registeredTools: make(map[string]registeredTool),
+		logger:          slog.New(slog.DiscardHandler),
 	}
 	s.watchers = newWatcherManager(s.runRootWatcher)
 	return s
@@ -24,6 +26,16 @@ func New() *Server {
 // SetToolRegistry attaches the registry used for tool registration updates.
 func (s *Server) SetToolRegistry(registry toolRegistry) {
 	s.toolRegistry = registry
+}
+
+// SetLogger replaces the structured logger used by the server. Passing
+// a nil logger restores the default silent logger so Server methods can
+// log unconditionally without nil-checking.
+func (s *Server) SetLogger(logger *slog.Logger) {
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
+	s.logger = logger
 }
 
 // isMethodNotFound reports whether err is a JSON-RPC "method not found" error,
@@ -59,14 +71,18 @@ func (r reconcileResult) changed() bool {
 //
 // This helper performs disk I/O (loadRoot, newUnloadedRoot) and MUST be
 // called without s.mu held.
-func loadDesired(ctx context.Context, roots []*mcp.Root, existing map[string]struct{}) (map[string]struct{}, map[string]*Root) {
+func (s *Server) loadDesired(ctx context.Context, roots []*mcp.Root, existing map[string]struct{}) (map[string]struct{}, map[string]*Root) {
 	desiredURIs := make(map[string]struct{}, len(roots))
 	loadedRoots := make(map[string]*Root, len(roots))
 
 	for _, r := range roots {
 		canonicalURI, dir, parseErr := canonicalRootURI(r.URI)
 		if parseErr != nil {
-			log.Printf("skipping root with invalid URI %q: %v", r.URI, parseErr)
+			s.logger.Warn("skipping root with invalid URI",
+				slog.String("event", "root.invalid_uri"),
+				slog.String("root_uri", r.URI),
+				slog.Any("error", parseErr),
+			)
 			continue
 		}
 		desiredURIs[canonicalURI] = struct{}{}
@@ -79,10 +95,18 @@ func loadDesired(ctx context.Context, roots []*mcp.Root, existing map[string]str
 
 		root, loadErr := loadRoot(ctx, dir)
 		if loadErr != nil {
-			log.Printf("failed to load root %q: %v", r.URI, loadErr)
+			s.logger.Warn("failed to load root, falling back to unloaded placeholder",
+				slog.String("event", "root.load_failed"),
+				slog.String("root_uri", r.URI),
+				slog.Any("error", loadErr),
+			)
 			root, loadErr = newUnloadedRoot(dir)
 			if loadErr != nil {
-				log.Printf("failed to watch unloaded root %q: %v", r.URI, loadErr)
+				s.logger.Error("failed to watch unloaded root",
+					slog.String("event", "root.unloaded_failed"),
+					slog.String("root_uri", r.URI),
+					slog.Any("error", loadErr),
+				)
 				continue
 			}
 		}
@@ -115,7 +139,7 @@ func (s *Server) snapshotExistingRoots() map[string]struct{} {
 // has been released.
 func (s *Server) initializeRoots(ctx context.Context, roots []*mcp.Root) (reconcileResult, error) {
 	existing := s.snapshotExistingRoots()
-	_, loadedRoots := loadDesired(ctx, roots, existing)
+	_, loadedRoots := s.loadDesired(ctx, roots, existing)
 
 	var res reconcileResult
 	s.mu.Lock()
@@ -148,7 +172,7 @@ func (s *Server) initializeRoots(ctx context.Context, roots []*mcp.Root) (reconc
 // has been released.
 func (s *Server) replaceRoots(ctx context.Context, roots []*mcp.Root) reconcileResult {
 	existing := s.snapshotExistingRoots()
-	desiredURIs, loadedRoots := loadDesired(ctx, roots, existing)
+	desiredURIs, loadedRoots := s.loadDesired(ctx, roots, existing)
 
 	var res reconcileResult
 	s.mu.Lock()
@@ -218,7 +242,10 @@ func listClientRoots(ctx context.Context, session *mcp.ServerSession) ([]*mcp.Ro
 // HandleInitialized is called after the client handshake completes.
 func (s *Server) HandleInitialized(ctx context.Context, req *mcp.InitializedRequest) {
 	if err := s.initializeRootsFromSession(ctx, req.Session); err != nil {
-		log.Printf("failed to initialize roots: %v", err)
+		s.logger.Error("failed to initialize roots",
+			slog.String("event", "roots.init_failed"),
+			slog.Any("error", err),
+		)
 	}
 }
 
@@ -229,14 +256,20 @@ func (s *Server) HandleInitialized(ctx context.Context, req *mcp.InitializedRequ
 func (s *Server) HandleRootsChanged(ctx context.Context, req *mcp.RootsListChangedRequest) {
 	rootRes, err := req.Session.ListRoots(ctx, nil)
 	if err != nil {
-		log.Printf("failed to list roots after change: %v", err)
+		s.logger.Error("failed to list roots after change",
+			slog.String("event", "roots.list_failed"),
+			slog.Any("error", err),
+		)
 		return
 	}
 
 	res := s.replaceRoots(ctx, rootRes.Roots)
 
 	if err := s.syncTools(); err != nil {
-		log.Printf("failed to sync tools after roots change: %v", err)
+		s.logger.Error("failed to sync tools after roots change",
+			slog.String("event", "tools.sync_failed"),
+			slog.Any("error", err),
+		)
 	}
 	s.watchers.apply(ctx, res.added, res.removed)
 }

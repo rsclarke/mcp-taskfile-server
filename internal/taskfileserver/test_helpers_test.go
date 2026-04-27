@@ -3,6 +3,7 @@ package taskfileserver
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -16,6 +17,13 @@ import (
 	"github.com/go-task/task/v3/taskfile/ast"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// testLogger returns a logger that discards all output. Tests that need
+// to assert on log output should construct their own buffer-backed
+// handler instead.
+func testLogger() *slog.Logger {
+	return slog.New(slog.DiscardHandler)
+}
 
 // loadServerFromFixture creates a Server from a testdata fixture directory.
 func loadServerFromFixture(t *testing.T, name string) *Server {

@@ -169,7 +169,8 @@ func TestLoadDesired_SkipsExistingURIs(t *testing.T) {
 	uriB := writeTaskfile(t, "beta")
 
 	existing := map[string]struct{}{uriA: {}}
-	desired, loaded := loadDesired(t.Context(), testRoots(uriA, uriB), existing)
+	s := New()
+	desired, loaded := s.loadDesired(t.Context(), testRoots(uriA, uriB), existing)
 
 	if _, ok := desired[uriA]; !ok {
 		t.Fatalf("expected uriA in desired set, got %v", desired)
@@ -188,7 +189,8 @@ func TestLoadDesired_SkipsExistingURIs(t *testing.T) {
 func TestLoadDesired_DropsInvalidURIs(t *testing.T) {
 	uriA := writeTaskfile(t, "alpha")
 
-	desired, loaded := loadDesired(
+	s := New()
+	desired, loaded := s.loadDesired(
 		t.Context(),
 		testRoots(uriA, "not-a-valid-uri", "https://example.com"),
 		nil,

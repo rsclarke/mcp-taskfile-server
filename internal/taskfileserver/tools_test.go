@@ -202,7 +202,7 @@ func TestCreateToolForTask_RequiresEnum(t *testing.T) {
 func TestBuildToolPlan_SkipsInternal(t *testing.T) {
 	s := loadServerFromFixture(t, "internal")
 
-	tools := buildToolPlan(snapshotFromServer(s)).tools
+	tools := buildToolPlan(snapshotFromServer(s), testLogger()).tools
 
 	if len(tools) != 1 {
 		t.Fatalf("expected 1 tool, got %d", len(tools))
@@ -397,7 +397,7 @@ func TestCreateToolForTask_LeadingDot(t *testing.T) {
 func TestBuildToolPlan_Namespaced(t *testing.T) {
 	s := loadServerFromFixture(t, "namespaced")
 
-	tools := buildToolPlan(snapshotFromServer(s)).tools
+	tools := buildToolPlan(snapshotFromServer(s), testLogger()).tools
 
 	for _, want := range []string{"db_migrate", "uv_run", "uv_run_dev_lint-imports"} {
 		if _, ok := tools[want]; !ok {
@@ -409,7 +409,7 @@ func TestBuildToolPlan_Namespaced(t *testing.T) {
 func TestBuildToolPlan_Includes(t *testing.T) {
 	s := loadServerFromFixture(t, "includes")
 
-	tools := buildToolPlan(snapshotFromServer(s)).tools
+	tools := buildToolPlan(snapshotFromServer(s), testLogger()).tools
 
 	for _, want := range []string{"build", "docs_serve", "docs_build"} {
 		if _, ok := tools[want]; !ok {
@@ -421,7 +421,7 @@ func TestBuildToolPlan_Includes(t *testing.T) {
 func TestBuildToolPlan_Wildcard(t *testing.T) {
 	s := loadServerFromFixture(t, "wildcard")
 
-	tools := buildToolPlan(snapshotFromServer(s)).tools
+	tools := buildToolPlan(snapshotFromServer(s), testLogger()).tools
 
 	for _, want := range []string{"start", "deploy"} {
 		if _, ok := tools[want]; !ok {
@@ -433,7 +433,7 @@ func TestBuildToolPlan_Wildcard(t *testing.T) {
 func TestBuildToolPlan_HandlerExecutesSelectedTool(t *testing.T) {
 	s := loadServerFromFixture(t, "basic")
 
-	plan := buildToolPlan(snapshotFromServer(s))
+	plan := buildToolPlan(snapshotFromServer(s), testLogger())
 	handler, ok := plan.handlers["greet"]
 	if !ok {
 		t.Fatalf("missing handler for greet, got %v", toolNames(plan.tools))
@@ -455,7 +455,7 @@ func TestBuildToolPlan_HandlerExecutesSelectedTool(t *testing.T) {
 func TestBuildToolPlan_HandlerPassesVariables(t *testing.T) {
 	s := newTempServer(t, []byte("version: '3'\ntasks:\n  greet:\n    desc: Greet someone\n    cmds:\n      - echo hello {{.NAME}}\n"))
 
-	plan := buildToolPlan(snapshotFromServer(s))
+	plan := buildToolPlan(snapshotFromServer(s), testLogger())
 	handler, ok := plan.handlers["greet"]
 	if !ok {
 		t.Fatalf("missing handler for greet, got %v", toolNames(plan.tools))
@@ -475,7 +475,7 @@ func TestBuildToolPlan_HandlerPassesVariables(t *testing.T) {
 func TestBuildToolPlan_HandlerReportsTaskFailure(t *testing.T) {
 	s := newTempServer(t, []byte("version: '3'\ntasks:\n  fail:\n    desc: A failing task\n    cmds:\n      - exit 1\n"))
 
-	plan := buildToolPlan(snapshotFromServer(s))
+	plan := buildToolPlan(snapshotFromServer(s), testLogger())
 	handler, ok := plan.handlers["fail"]
 	if !ok {
 		t.Fatalf("missing handler for fail, got %v", toolNames(plan.tools))
@@ -498,7 +498,7 @@ func TestBuildToolPlan_HandlerReportsTaskFailure(t *testing.T) {
 func TestBuildToolPlan_HandlerExecutesWildcardTool(t *testing.T) {
 	s := loadServerFromFixture(t, "wildcard")
 
-	plan := buildToolPlan(snapshotFromServer(s))
+	plan := buildToolPlan(snapshotFromServer(s), testLogger())
 	handler, ok := plan.handlers["deploy"]
 	if !ok {
 		t.Fatalf("missing handler for deploy, got %v", toolNames(plan.tools))
@@ -551,7 +551,7 @@ func TestBuildToolPlan_HandlerSelectsPrefixedRootTool(t *testing.T) {
 		},
 	}
 
-	plan := buildToolPlan(snapshotFromServer(s))
+	plan := buildToolPlan(snapshotFromServer(s), testLogger())
 	frontendHandler, ok := plan.handlers["frontend_serve"]
 	if !ok {
 		t.Fatalf("missing frontend handler, got %v", toolNames(plan.tools))
@@ -696,7 +696,7 @@ func TestBuildToolPlan_ExcludesCollidingToolNamesAcrossRoots(t *testing.T) {
 		},
 	}
 
-	plan := buildToolPlan(snapshotFromServer(s))
+	plan := buildToolPlan(snapshotFromServer(s), testLogger())
 	tools, handlers := plan.tools, plan.handlers
 
 	if _, ok := tools["dup_hello"]; ok {
@@ -728,7 +728,7 @@ func TestBuildToolPlan_ExcludesCollidingToolNamesWithinRoot(t *testing.T) {
 		roots: map[string]*Root{dirToURI(dir): root},
 	}
 
-	plan := buildToolPlan(snapshotFromServer(s))
+	plan := buildToolPlan(snapshotFromServer(s), testLogger())
 	tools, handlers := plan.tools, plan.handlers
 	if _, ok := tools["build_dev"]; ok {
 		t.Fatalf("expected colliding tool build_dev to be excluded, got %v", toolNames(tools))
@@ -756,7 +756,7 @@ func TestBuildToolPlan_NoTasks(t *testing.T) {
 		roots: map[string]*Root{dirToURI(dir): root},
 	}
 
-	plan := buildToolPlan(snapshotFromServer(s))
+	plan := buildToolPlan(snapshotFromServer(s), testLogger())
 	tools, handlers := plan.tools, plan.handlers
 	if len(tools) != 0 {
 		t.Fatalf("expected no tools, got %v", toolNames(tools))
@@ -863,7 +863,7 @@ func TestBuildToolPlan_FromSnapshot(t *testing.T) {
 		},
 	}
 
-	plan := buildToolPlan(snap)
+	plan := buildToolPlan(snap, testLogger())
 	if _, ok := plan.tools["greet"]; !ok {
 		t.Fatalf("expected tool greet, got %v", toolNames(plan.tools))
 	}
@@ -986,7 +986,7 @@ func TestSyncTools_OrphanedToolOnConcurrentSync(t *testing.T) {
 	s.mu.Unlock()
 
 	// G1 plans from the stale snapshot (both tasks).
-	plan := buildToolPlan(snap)
+	plan := buildToolPlan(snap, testLogger())
 	stale, added := diffTools(oldTools, plan.tools)
 
 	// G1 tries to apply — generation should mismatch, no MCP calls.
@@ -1057,7 +1057,7 @@ func TestSnapshotToolState_IsolatedFromRootMutation(t *testing.T) {
 	// Planner must run safely against the snapshot, observing the
 	// taskfile that was current at snapshot time, not the now-nil
 	// field on the live root.
-	plan := buildToolPlan(snap)
+	plan := buildToolPlan(snap, testLogger())
 	if _, ok := plan.tools["greet"]; !ok {
 		t.Fatalf("expected snapshotted plan to retain greet, got %v", toolNames(plan.tools))
 	}

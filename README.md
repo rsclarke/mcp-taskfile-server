@@ -151,6 +151,25 @@ The server resolves each root's Taskfile graph using `go-task`, then watches the
 After each reload, the server recomputes the graph-derived watch set so newly included local Taskfiles start being watched and removed ones stop being watched. File system events are debounced (~200 ms) to avoid redundant reloads during rapid edits. The watcher runs for the lifetime of the server and is cleaned up on shutdown.
 If a root Taskfile becomes invalid or is deleted, the server withdraws that root's tools until a valid Taskfile is restored.
 
+## Logging
+
+The server emits structured JSON logs to **stderr** using [`log/slog`](https://pkg.go.dev/log/slog). With the stdio MCP transport, stderr is the only safe channel for diagnostics; stdout is reserved for JSON-RPC traffic.
+
+Each line is a single JSON object with at least:
+
+- `time`, `level`, `msg`
+- `service` and `version` of this server
+- An `event` field naming the specific occurrence (e.g. `root.load_failed`, `tools.collision`, `watcher.reload_failed`)
+- Contextual fields where applicable: `root_uri`, `tool_name`, `error`
+
+The default level is `info`. Set the `MCP_TASKFILE_LOG_LEVEL` environment variable to one of `debug`, `info`, `warn`, or `error` to change it (case-insensitive). Unrecognised values fall back to `info`.
+
+```bash
+MCP_TASKFILE_LOG_LEVEL=debug mcp-taskfile-server
+```
+
+> Mirroring selected log lines to the connected MCP client via the [`logging` capability](https://modelcontextprotocol.io/specification/2025-11-25/server/logging) is tracked in [#98](https://github.com/rsclarke/mcp-taskfile-server/issues/98); today the server only logs to stderr.
+
 ## Error Handling
 
 The server handles various error conditions:

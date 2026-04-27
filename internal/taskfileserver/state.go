@@ -1,6 +1,7 @@
 package taskfileserver
 
 import (
+	"log/slog"
 	"sync"
 
 	"github.com/go-task/task/v3/taskfile/ast"
@@ -43,6 +44,7 @@ type Server struct {
 	toolRegistry    toolRegistry
 	registeredTools map[string]registeredTool
 	watchers        *watcherManager
+	logger          *slog.Logger
 	mu              sync.Mutex
 	generation      uint64
 }

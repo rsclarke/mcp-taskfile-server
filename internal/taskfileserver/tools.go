@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"maps"
 	"slices"
 	"strings"
@@ -130,8 +130,10 @@ type toolPlan struct {
 }
 
 // buildToolPlan computes the desired tool registration state from a snapshot
-// without accessing or mutating the server.
-func buildToolPlan(snap toolStateSnapshot) toolPlan {
+// without accessing or mutating the server. logger receives diagnostics
+// for plan-level decisions such as colliding tool names; passing a nil
+// logger panics.
+func buildToolPlan(snap toolStateSnapshot, logger *slog.Logger) toolPlan {
 	type toolCandidate struct {
 		workdir  string
 		taskName string
@@ -181,7 +183,11 @@ func buildToolPlan(snap toolStateSnapshot) toolPlan {
 				details = append(details, fmt.Sprintf("%s (%s)", candidate.taskName, candidate.workdir))
 			}
 			slices.Sort(details)
-			log.Printf("excluding colliding tool name %q from MCP exposure: %s", name, strings.Join(details, ", "))
+			logger.Warn("excluding colliding tool name from MCP exposure",
+				slog.String("event", "tools.collision"),
+				slog.String("tool_name", name),
+				slog.String("candidates", strings.Join(details, ", ")),
+			)
 			continue
 		}
 
@@ -235,7 +241,7 @@ func (s *Server) syncTools() error {
 	s.mu.Unlock()
 
 	// Phase 2: pure planning — no lock held.
-	plan := buildToolPlan(snap)
+	plan := buildToolPlan(snap, s.logger)
 	stale, added := diffTools(oldTools, plan.tools)
 
 	// Phase 3: validate generation, apply MCP side effects, and commit
