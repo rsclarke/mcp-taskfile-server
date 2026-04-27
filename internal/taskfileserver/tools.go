@@ -39,31 +39,51 @@ func createToolForTask(tf *ast.Taskfile, prefix, taskName string, taskDef *ast.T
 		description += fmt.Sprintf(" (task: %s)", taskName)
 	}
 
-	// Collect all variables (global + task-specific)
-	allVars := make(map[string]ast.Var)
-
-	// Add global variables first
-	if tf.Vars != nil && tf.Vars.Len() > 0 {
-		maps.Insert(allVars, tf.Vars.All())
-	}
-
-	// Add task-specific variables (these override global ones)
-	if taskDef.Vars != nil && taskDef.Vars.Len() > 0 {
-		maps.Insert(allVars, taskDef.Vars.All())
-	}
-
-	// Build JSON Schema properties for all variables
+	// Build JSON Schema properties.
+	//
+	// Only enumerate global Taskfile vars: task-level `vars:` are applied
+	// after caller-supplied values inside go-task's compiler, so advertising
+	// them as MCP arguments would be a tool-contract lie. Required caller
+	// inputs come exclusively from `requires:` below.
 	properties := make(map[string]any)
 	required := []string{}
 
-	for varName, varDef := range allVars {
-		defaultValue := ""
-		if strVal, ok := varDef.Value.(string); ok {
-			defaultValue = strVal
+	if tf.Vars != nil {
+		for varName, varDef := range tf.Vars.All() {
+			prop := map[string]any{
+				"type": "string",
+			}
+			if strVal, ok := varDef.Value.(string); ok {
+				prop["default"] = strVal
+				prop["description"] = fmt.Sprintf("Variable: %s (default: %s)", varName, strVal)
+			} else {
+				prop["description"] = "Variable: " + varName
+			}
+			properties[varName] = prop
 		}
-		properties[varName] = map[string]any{
-			"type":        "string",
-			"description": fmt.Sprintf("Variable: %s (default: %s)", varName, defaultValue),
+	}
+
+	// Honour the task's `requires:` block: each named var becomes a
+	// required property, and a static `enum:` translates directly to
+	// JSON Schema `enum`. The `enum: { ref: .OTHER }` form is skipped
+	// for now since it cannot be resolved without runtime context.
+	if taskDef.Requires != nil {
+		for _, req := range taskDef.Requires.Vars {
+			if req == nil || req.Name == "" {
+				continue
+			}
+			prop, ok := properties[req.Name].(map[string]any)
+			if !ok {
+				prop = map[string]any{
+					"type":        "string",
+					"description": "Required variable: " + req.Name,
+				}
+			}
+			if req.Enum != nil && len(req.Enum.Value) > 0 {
+				prop["enum"] = slices.Clone(req.Enum.Value)
+			}
+			properties[req.Name] = prop
+			required = append(required, req.Name)
 		}
 	}
 

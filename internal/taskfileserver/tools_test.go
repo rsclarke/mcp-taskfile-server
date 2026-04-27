@@ -46,7 +46,9 @@ func TestCreateToolForTask_NoDescription(t *testing.T) {
 	}
 }
 
-func TestCreateToolForTask_TaskVars(t *testing.T) {
+func TestCreateToolForTask_TaskVarsExcluded(t *testing.T) {
+	// Task-level `vars:` are applied after caller-supplied values inside
+	// go-task's compiler, so they must not appear as MCP arguments.
 	s := loadServerFromFixture(t, "task-vars")
 	root := onlyRoot(t, s)
 
@@ -54,20 +56,11 @@ func TestCreateToolForTask_TaskVars(t *testing.T) {
 	tool := createToolForTask(root.taskfile, "", "deploy", taskDef)
 
 	props := schemaProperties(t, tool)
-	if len(props) != 2 {
-		t.Fatalf("expected 2 properties, got %d", len(props))
+	if len(props) != 0 {
+		t.Fatalf("expected no properties for a task with only task-level vars, got %d: %v", len(props), props)
 	}
-
-	for _, varName := range []string{"ENV", "REGION"} {
-		prop, ok := props[varName]
-		if !ok {
-			t.Errorf("missing property %q", varName)
-			continue
-		}
-		propMap, _ := prop.(map[string]any)
-		if propMap["type"] != "string" {
-			t.Errorf("property %q type = %v, want %q", varName, propMap["type"], "string")
-		}
+	if req := schemaRequired(t, tool); len(req) != 0 {
+		t.Errorf("expected no required entries, got %v", req)
 	}
 }
 
@@ -89,9 +82,14 @@ func TestCreateToolForTask_GlobalVars(t *testing.T) {
 	if desc != "Variable: APP_NAME (default: myapp)" {
 		t.Errorf("description = %q, want it to contain default value", desc)
 	}
+	if got := propMap["default"]; got != "myapp" {
+		t.Errorf("default = %v, want %q", got, "myapp")
+	}
 }
 
-func TestCreateToolForTask_OverrideVars(t *testing.T) {
+func TestCreateToolForTask_GlobalVarsHonoured(t *testing.T) {
+	// Global vars are exposed as caller-overridable arguments. Task-level
+	// vars are dropped, so the global default must remain visible.
 	s := loadServerFromFixture(t, "override-vars")
 	root := onlyRoot(t, s)
 
@@ -99,17 +97,105 @@ func TestCreateToolForTask_OverrideVars(t *testing.T) {
 	tool := createToolForTask(root.taskfile, "", "deploy", taskDef)
 
 	props := schemaProperties(t, tool)
+	if len(props) != 1 {
+		t.Fatalf("expected only the global var, got %d: %v", len(props), props)
+	}
 	prop, ok := props["ENV"]
 	if !ok {
 		t.Fatal("missing property ENV")
 	}
 
-	// Task var should override global var
 	propMap, _ := prop.(map[string]any)
+	if got := propMap["default"]; got != "production" {
+		t.Errorf("default = %v, want %q", got, "production")
+	}
 	desc, _ := propMap["description"].(string)
-	want := "Variable: ENV (default: staging)"
+	want := "Variable: ENV (default: production)"
 	if desc != want {
 		t.Errorf("description = %q, want %q", desc, want)
+	}
+}
+
+func TestCreateToolForTask_GlobalVarWithoutStaticDefault(t *testing.T) {
+	// A global var whose Value is not a static string (here computed via
+	// `sh:`) should be exposed as an argument with no `default` field.
+	s := loadServerFromFixture(t, "requires")
+	root := onlyRoot(t, s)
+
+	taskDef := lookupTask(t, root.taskfile, "release")
+	tool := createToolForTask(root.taskfile, "", "release", taskDef)
+
+	props := schemaProperties(t, tool)
+	prop, ok := props["GIT_SHA"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing GIT_SHA property, got %v", props)
+	}
+	if _, hasDefault := prop["default"]; hasDefault {
+		t.Errorf("expected no default for sh-computed var, got %v", prop["default"])
+	}
+	if got := prop["description"]; got != "Variable: GIT_SHA" {
+		t.Errorf("description = %v, want %q", got, "Variable: GIT_SHA")
+	}
+}
+
+func TestCreateToolForTask_RequiresVar(t *testing.T) {
+	s := loadServerFromFixture(t, "requires")
+	root := onlyRoot(t, s)
+
+	taskDef := lookupTask(t, root.taskfile, "release")
+	tool := createToolForTask(root.taskfile, "", "release", taskDef)
+
+	props := schemaProperties(t, tool)
+	prop, ok := props["VERSION"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing VERSION property, got %v", props)
+	}
+	if got := prop["type"]; got != "string" {
+		t.Errorf("VERSION type = %v, want %q", got, "string")
+	}
+	if _, hasDefault := prop["default"]; hasDefault {
+		t.Errorf("required var should have no default, got %v", prop["default"])
+	}
+	if _, hasEnum := prop["enum"]; hasEnum {
+		t.Errorf("plain required var should have no enum, got %v", prop["enum"])
+	}
+
+	required := schemaRequired(t, tool)
+	if !slices.Contains(required, "VERSION") {
+		t.Errorf("required = %v, want it to include VERSION", required)
+	}
+}
+
+func TestCreateToolForTask_RequiresEnum(t *testing.T) {
+	s := loadServerFromFixture(t, "requires")
+	root := onlyRoot(t, s)
+
+	taskDef := lookupTask(t, root.taskfile, "release")
+	tool := createToolForTask(root.taskfile, "", "release", taskDef)
+
+	props := schemaProperties(t, tool)
+	prop, ok := props["CHANNEL"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing CHANNEL property, got %v", props)
+	}
+
+	rawEnum, ok := prop["enum"].([]any)
+	if !ok {
+		t.Fatalf("CHANNEL.enum has wrong type %T: %v", prop["enum"], prop["enum"])
+	}
+	got := make([]string, 0, len(rawEnum))
+	for _, v := range rawEnum {
+		s, _ := v.(string)
+		got = append(got, s)
+	}
+	want := []string{"stable", "beta", "nightly"}
+	if !slices.Equal(got, want) {
+		t.Errorf("CHANNEL.enum = %v, want %v", got, want)
+	}
+
+	required := schemaRequired(t, tool)
+	if !slices.Contains(required, "CHANNEL") {
+		t.Errorf("required = %v, want it to include CHANNEL", required)
 	}
 }
 

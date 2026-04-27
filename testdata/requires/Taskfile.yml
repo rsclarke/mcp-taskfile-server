@@ -1,0 +1,17 @@
+version: "3"
+
+vars:
+  REGION: us-east-1
+  GIT_SHA:
+    sh: git rev-parse HEAD
+
+tasks:
+  release:
+    desc: Cut a release
+    requires:
+      vars:
+        - VERSION
+        - name: CHANNEL
+          enum: [stable, beta, nightly]
+    cmds:
+      - echo "release {{.VERSION}} on {{.CHANNEL}} from {{.REGION}} ({{.GIT_SHA}})"
