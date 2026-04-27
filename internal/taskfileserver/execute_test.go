@@ -16,7 +16,7 @@ func TestCreateTaskHandlerForWorkdir_WildcardMATCH(t *testing.T) {
 		name        string
 		taskName    string
 		toolName    string
-		arguments   map[string]string
+		arguments   map[string]any
 		wantError   bool
 		wantSubstrs []string
 	}{
@@ -24,15 +24,22 @@ func TestCreateTaskHandlerForWorkdir_WildcardMATCH(t *testing.T) {
 			name:        "single wildcard success",
 			taskName:    "start:*",
 			toolName:    "start",
-			arguments:   map[string]string{"MATCH": "web"},
+			arguments:   map[string]any{"MATCH": []string{"web"}},
 			wantSubstrs: []string{"completed successfully", "web"},
 		},
 		{
-			name:        "multi wildcard trims values",
+			name:        "multi wildcard success",
 			taskName:    "deploy:*:*",
 			toolName:    "deploy",
-			arguments:   map[string]string{"MATCH": " api , production "},
+			arguments:   map[string]any{"MATCH": []string{"api", "production"}},
 			wantSubstrs: []string{"completed successfully", "api", "production"},
+		},
+		{
+			name:        "value containing comma is preserved",
+			taskName:    "start:*",
+			toolName:    "start",
+			arguments:   map[string]any{"MATCH": []string{"a,b"}},
+			wantSubstrs: []string{"completed successfully", "a,b"},
 		},
 		{
 			name:        "missing MATCH",
@@ -42,28 +49,44 @@ func TestCreateTaskHandlerForWorkdir_WildcardMATCH(t *testing.T) {
 			wantSubstrs: []string{"MATCH"},
 		},
 		{
-			name:        "wrong MATCH count",
+			name:        "MATCH not an array",
+			taskName:    "start:*",
+			toolName:    "start",
+			arguments:   map[string]any{"MATCH": "web"},
+			wantError:   true,
+			wantSubstrs: []string{"must be an array"},
+		},
+		{
+			name:        "too few MATCH values",
 			taskName:    "deploy:*:*",
 			toolName:    "deploy",
-			arguments:   map[string]string{"MATCH": "onlyone"},
+			arguments:   map[string]any{"MATCH": []string{"onlyone"}},
 			wantError:   true,
-			wantSubstrs: []string{"2 comma-separated"},
+			wantSubstrs: []string{"exactly 2 value(s)", "got 1"},
 		},
 		{
 			name:        "too many MATCH values",
 			taskName:    "deploy:*:*",
 			toolName:    "deploy",
-			arguments:   map[string]string{"MATCH": "api,production,extra"},
+			arguments:   map[string]any{"MATCH": []string{"api", "production", "extra"}},
 			wantError:   true,
-			wantSubstrs: []string{"exactly 2 comma-separated", "got 3"},
+			wantSubstrs: []string{"exactly 2 value(s)", "got 3"},
 		},
 		{
 			name:        "empty MATCH segment",
 			taskName:    "deploy:*:*",
 			toolName:    "deploy",
-			arguments:   map[string]string{"MATCH": "api, "},
+			arguments:   map[string]any{"MATCH": []string{"api", ""}},
 			wantError:   true,
 			wantSubstrs: []string{"cannot be empty"},
+		},
+		{
+			name:        "non-string MATCH element",
+			taskName:    "start:*",
+			toolName:    "start",
+			arguments:   map[string]any{"MATCH": []any{42}},
+			wantError:   true,
+			wantSubstrs: []string{"must be a string"},
 		},
 	}
 

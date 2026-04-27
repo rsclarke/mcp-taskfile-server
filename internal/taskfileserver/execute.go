@@ -33,33 +33,44 @@ func createTaskHandlerForWorkdir(workdir, taskName string) mcp.ToolHandler {
 		// Resolve the actual task name, substituting wildcards from MATCH
 		resolvedName := taskName
 		if wildcard {
-			matchVal, ok := arguments["MATCH"].(string)
-			if !ok || matchVal == "" {
+			rawMatch, ok := arguments["MATCH"]
+			if !ok {
 				return &mcp.CallToolResult{
 					Content: []mcp.Content{&mcp.TextContent{Text: "MATCH argument is required for wildcard tasks"}},
 					IsError: true,
 				}, nil
 			}
-			parts := strings.Split(matchVal, ",")
-			if len(parts) != wildcardCount {
+			rawParts, ok := rawMatch.([]any)
+			if !ok {
 				return &mcp.CallToolResult{
-					Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("MATCH requires exactly %d comma-separated value(s), got %d", wildcardCount, len(parts))}},
+					Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("MATCH must be an array of strings, got %T", rawMatch)}},
 					IsError: true,
 				}, nil
 			}
-			trimmedParts := make([]string, 0, len(parts))
-			for i, p := range parts {
-				trimmed := strings.TrimSpace(p)
-				if trimmed == "" {
+			if len(rawParts) != wildcardCount {
+				return &mcp.CallToolResult{
+					Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("MATCH requires exactly %d value(s), got %d", wildcardCount, len(rawParts))}},
+					IsError: true,
+				}, nil
+			}
+			parts := make([]string, 0, len(rawParts))
+			for i, raw := range rawParts {
+				str, ok := raw.(string)
+				if !ok {
+					return &mcp.CallToolResult{
+						Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("MATCH value %d must be a string, got %T", i+1, raw)}},
+						IsError: true,
+					}, nil
+				}
+				if str == "" {
 					return &mcp.CallToolResult{
 						Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("MATCH value %d cannot be empty", i+1)}},
 						IsError: true,
 					}, nil
 				}
-				trimmedParts = append(trimmedParts, trimmed)
+				parts = append(parts, str)
 			}
-			resolvedName = taskName
-			for _, p := range trimmedParts {
+			for _, p := range parts {
 				resolvedName = strings.Replace(resolvedName, "*", p, 1)
 			}
 			delete(arguments, "MATCH")

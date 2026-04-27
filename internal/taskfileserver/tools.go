@@ -90,12 +90,12 @@ func createToolForTask(tf *ast.Taskfile, prefix, taskName string, taskDef *ast.T
 	// Add MATCH parameter for wildcard tasks
 	if isWildcardTask(taskName) {
 		n := countWildcards(taskName)
-		matchDesc := "Wildcard value for task pattern " + taskName
-		if n > 1 {
-			matchDesc += fmt.Sprintf(" (%d comma-separated values)", n)
-		}
+		matchDesc := fmt.Sprintf("Wildcard values for task pattern %s (%d value(s) required, one per '*' segment)", taskName, n)
 		properties["MATCH"] = map[string]any{
-			"type":        "string",
+			"type":        "array",
+			"items":       map[string]any{"type": "string"},
+			"minItems":    n,
+			"maxItems":    n,
 			"description": matchDesc,
 		}
 		required = append(required, "MATCH")

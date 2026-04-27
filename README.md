@@ -96,23 +96,25 @@ The prefix is derived from the directory basename with non-alphanumeric characte
 
 ### Wildcard Tasks
 
-Taskfile [wildcard tasks](https://taskfile.dev/docs/guide#wildcard-arguments) (e.g. `start:*`) are exposed as tools with a required `MATCH` parameter. The server reconstructs the full task name at invocation time.
+Taskfile [wildcard tasks](https://taskfile.dev/docs/guide#wildcard-arguments) (e.g. `start:*`) are exposed as tools with a required `MATCH` parameter. `MATCH` is a JSON array of strings with one entry per `*` segment in the task name; the schema sets `minItems` and `maxItems` to that count so wrong-arity calls fail validation before the handler runs. The server substitutes each entry into the corresponding `*` segment to reconstruct the full task name at invocation time.
 
 For a task defined as `start:*`, calling the tool:
 
 ```json
-{"name": "start", "arguments": {"MATCH": "web"}}
+{"name": "start", "arguments": {"MATCH": ["web"]}}
 ```
 
 executes `task start:web`.
 
-For tasks with multiple wildcards (e.g. `deploy:*:*`), provide exactly one comma-separated value per wildcard segment. Surrounding whitespace is trimmed, but empty segments are rejected:
+For tasks with multiple wildcards (e.g. `deploy:*:*`), provide one array element per wildcard segment, in order. Empty strings are rejected:
 
 ```json
-{"name": "deploy", "arguments": {"MATCH": "api,production"}}
+{"name": "deploy", "arguments": {"MATCH": ["api", "production"]}}
 ```
 
 executes `task deploy:api:production`.
+
+> **Breaking change**: previous releases accepted `MATCH` as a single comma-separated string (e.g. `"api,production"`). Update clients to send a JSON array of strings instead. Values may now safely contain commas.
 
 ## MCP Integration
 

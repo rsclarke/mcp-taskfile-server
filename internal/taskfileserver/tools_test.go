@@ -329,8 +329,22 @@ func TestCreateToolForTask_Wildcard(t *testing.T) {
 		}
 
 		props := schemaProperties(t, tool)
-		if _, ok := props["MATCH"]; !ok {
-			t.Fatal("missing MATCH property for wildcard task")
+		matchProp, ok := props["MATCH"].(map[string]any)
+		if !ok {
+			t.Fatalf("missing MATCH property for wildcard task, got %v", props)
+		}
+		if got := matchProp["type"]; got != "array" {
+			t.Errorf("MATCH.type = %v, want %q", got, "array")
+		}
+		items, _ := matchProp["items"].(map[string]any)
+		if got := items["type"]; got != "string" {
+			t.Errorf("MATCH.items.type = %v, want %q", got, "string")
+		}
+		if got, want := matchProp["minItems"], float64(1); got != want {
+			t.Errorf("MATCH.minItems = %v, want %v", got, want)
+		}
+		if got, want := matchProp["maxItems"], float64(1); got != want {
+			t.Errorf("MATCH.maxItems = %v, want %v", got, want)
 		}
 
 		required := schemaRequired(t, tool)
@@ -348,14 +362,21 @@ func TestCreateToolForTask_Wildcard(t *testing.T) {
 		}
 
 		props := schemaProperties(t, tool)
-		matchProp, ok := props["MATCH"]
+		matchProp, ok := props["MATCH"].(map[string]any)
 		if !ok {
-			t.Fatal("missing MATCH property for wildcard task")
+			t.Fatalf("missing MATCH property for wildcard task, got %v", props)
 		}
-
-		propMap, _ := matchProp.(map[string]any)
-		desc, _ := propMap["description"].(string)
-		if !strings.Contains(desc, "2 comma-separated") {
+		if got := matchProp["type"]; got != "array" {
+			t.Errorf("MATCH.type = %v, want %q", got, "array")
+		}
+		if got, want := matchProp["minItems"], float64(2); got != want {
+			t.Errorf("MATCH.minItems = %v, want %v", got, want)
+		}
+		if got, want := matchProp["maxItems"], float64(2); got != want {
+			t.Errorf("MATCH.maxItems = %v, want %v", got, want)
+		}
+		desc, _ := matchProp["description"].(string)
+		if !strings.Contains(desc, "2 value(s)") {
 			t.Errorf("MATCH description should mention 2 values, got %q", desc)
 		}
 	})
@@ -478,7 +499,7 @@ func TestBuildToolPlan_HandlerExecutesWildcardTool(t *testing.T) {
 		t.Fatalf("missing handler for deploy, got %v", toolNames(plan.tools))
 	}
 
-	result := callToolHandler(t, handler, "deploy", map[string]string{"MATCH": "api,production"})
+	result := callToolHandler(t, handler, "deploy", map[string]any{"MATCH": []string{"api", "production"}})
 	if result.IsError {
 		t.Fatalf("expected success, got IsError=true: %s", toolResultText(t, result))
 	}
