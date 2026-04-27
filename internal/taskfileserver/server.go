@@ -17,8 +17,8 @@ func New() *Server {
 	s := &Server{
 		roots:           make(map[string]*Root),
 		registeredTools: make(map[string]registeredTool),
-		logger:          slog.New(slog.DiscardHandler),
 	}
+	s.logger.Store(slog.New(slog.DiscardHandler))
 	s.watchers = newWatcherManager(s.runRootWatcher)
 	return s
 }
@@ -30,12 +30,32 @@ func (s *Server) SetToolRegistry(registry toolRegistry) {
 
 // SetLogger replaces the structured logger used by the server. Passing
 // a nil logger restores the default silent logger so Server methods can
-// log unconditionally without nil-checking.
+// log unconditionally without nil-checking. The store is atomic so it
+// is safe to call from any goroutine, including after watcher goroutines
+// have started reading the logger.
 func (s *Server) SetLogger(logger *slog.Logger) {
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
-	s.logger = logger
+	s.logger.Store(logger)
+}
+
+// installMCPLogging extends the active logger with an MCP arm bound to
+// ss, so subsequent records reach the connected client via
+// logging/message in addition to whatever sink was previously installed
+// (typically a JSON handler on stderr).
+//
+// The SDK's LoggingHandler enforces the client-set threshold internally
+// via logging/setLevel; the stderr arm keeps its own threshold from
+// MCP_TASKFILE_LOG_LEVEL. Failures forwarding to the client are dropped
+// inside the SDK to avoid recursion through this handler.
+func (s *Server) installMCPLogging(ss *mcp.ServerSession) {
+	current := s.log()
+	mcpHandler := mcp.NewLoggingHandler(ss, &mcp.LoggingHandlerOptions{
+		LoggerName: "mcp-taskfile-server",
+	})
+	fanout := newFanoutHandler(current.Handler(), mcpHandler)
+	s.SetLogger(slog.New(fanout))
 }
 
 // isMethodNotFound reports whether err is a JSON-RPC "method not found" error,
@@ -78,7 +98,7 @@ func (s *Server) loadDesired(ctx context.Context, roots []*mcp.Root, existing ma
 	for _, r := range roots {
 		canonicalURI, dir, parseErr := canonicalRootURI(r.URI)
 		if parseErr != nil {
-			s.logger.Warn("skipping root with invalid URI",
+			s.log().Warn("skipping root with invalid URI",
 				slog.String("event", "root.invalid_uri"),
 				slog.String("root_uri", r.URI),
 				slog.Any("error", parseErr),
@@ -95,14 +115,14 @@ func (s *Server) loadDesired(ctx context.Context, roots []*mcp.Root, existing ma
 
 		root, loadErr := loadRoot(ctx, dir)
 		if loadErr != nil {
-			s.logger.Warn("failed to load root, falling back to unloaded placeholder",
+			s.log().Warn("failed to load root, falling back to unloaded placeholder",
 				slog.String("event", "root.load_failed"),
 				slog.String("root_uri", r.URI),
 				slog.Any("error", loadErr),
 			)
 			root, loadErr = newUnloadedRoot(dir)
 			if loadErr != nil {
-				s.logger.Error("failed to watch unloaded root",
+				s.log().Error("failed to watch unloaded root",
 					slog.String("event", "root.unloaded_failed"),
 					slog.String("root_uri", r.URI),
 					slog.Any("error", loadErr),
@@ -240,9 +260,12 @@ func listClientRoots(ctx context.Context, session *mcp.ServerSession) ([]*mcp.Ro
 }
 
 // HandleInitialized is called after the client handshake completes.
+// Before doing any other work it extends the active logger with an MCP
+// arm bound to req.Session so subsequent log records reach the client.
 func (s *Server) HandleInitialized(ctx context.Context, req *mcp.InitializedRequest) {
+	s.installMCPLogging(req.Session)
 	if err := s.initializeRootsFromSession(ctx, req.Session); err != nil {
-		s.logger.Error("failed to initialize roots",
+		s.log().Error("failed to initialize roots",
 			slog.String("event", "roots.init_failed"),
 			slog.Any("error", err),
 		)
@@ -256,7 +279,7 @@ func (s *Server) HandleInitialized(ctx context.Context, req *mcp.InitializedRequ
 func (s *Server) HandleRootsChanged(ctx context.Context, req *mcp.RootsListChangedRequest) {
 	rootRes, err := req.Session.ListRoots(ctx, nil)
 	if err != nil {
-		s.logger.Error("failed to list roots after change",
+		s.log().Error("failed to list roots after change",
 			slog.String("event", "roots.list_failed"),
 			slog.Any("error", err),
 		)
@@ -266,7 +289,7 @@ func (s *Server) HandleRootsChanged(ctx context.Context, req *mcp.RootsListChang
 	res := s.replaceRoots(ctx, rootRes.Roots)
 
 	if err := s.syncTools(); err != nil {
-		s.logger.Error("failed to sync tools after roots change",
+		s.log().Error("failed to sync tools after roots change",
 			slog.String("event", "tools.sync_failed"),
 			slog.Any("error", err),
 		)

@@ -40,6 +40,11 @@ func parseLogLevel(raw string) slog.Level {
 // newLogger builds the structured logger used by the server. It writes
 // JSON to stderr (the only safe channel under stdio MCP transport) and
 // honours MCP_TASKFILE_LOG_LEVEL.
+//
+// MCP-side mirroring is wired in by the Server itself once the client
+// handshake completes, by extending this logger with the SDK's
+// LoggingHandler bound to the active session. The client controls
+// what reaches it via logging/setLevel, independently of stderr.
 func newLogger() *slog.Logger {
 	level := parseLogLevel(os.Getenv(logLevelEnv))
 	handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level})
@@ -50,17 +55,15 @@ func newLogger() *slog.Logger {
 }
 
 func run() error {
-	logger := newLogger()
-
-	// Create taskfile server
 	taskfileServer := taskfileserver.New()
-	taskfileServer.SetLogger(logger)
+	taskfileServer.SetLogger(newLogger())
 	defer taskfileServer.Shutdown()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Create MCP server with lifecycle handlers
+	// Create MCP server with lifecycle handlers. The default server
+	// capabilities advertised by the SDK already include logging.
 	mcpServer := mcp.NewServer(
 		&mcp.Implementation{
 			Name:    serverName,
@@ -73,11 +76,6 @@ func run() error {
 	)
 	taskfileServer.SetToolRegistry(mcpServer)
 
-	// Start the stdio server.
-	//
-	// TODO(#98): mirror selected log lines through the MCP `logging`
-	// capability so they reach the client. Tracked separately from #88
-	// (slog migration) and the deferral in commit 84473b2 (#87).
 	if err := mcpServer.Run(ctx, &mcp.StdioTransport{}); err != nil {
 		return fmt.Errorf("server error: %w", err)
 	}

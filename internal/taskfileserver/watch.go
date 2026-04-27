@@ -246,7 +246,7 @@ func (s *Server) watchRootTaskfiles(ctx context.Context, uri string) error {
 		case <-timer.C:
 			timerPending = false
 			if err := s.reloadRoot(ctx, uri); err != nil {
-				s.logger.Error("failed to reload tools for root",
+				s.log().Error("failed to reload tools for root",
 					slog.String("event", "watcher.reload_failed"),
 					slog.String("root_uri", uri),
 					slog.Any("error", err),
@@ -285,7 +285,7 @@ func (s *Server) watchRootTaskfiles(ctx context.Context, uri string) error {
 			if !ok {
 				return nil
 			}
-			s.logger.Warn("file watcher error",
+			s.log().Warn("file watcher error",
 				slog.String("event", "watcher.fs_error"),
 				slog.String("root_uri", uri),
 				slog.Any("error", err),
@@ -299,7 +299,7 @@ func (s *Server) watchRootTaskfiles(ctx context.Context, uri string) error {
 // take down the manager's bookkeeping.
 func (s *Server) runRootWatcher(ctx context.Context, uri string) {
 	if err := s.watchRootTaskfiles(ctx, uri); err != nil {
-		s.logger.Error("file watcher failed",
+		s.log().Error("file watcher failed",
 			slog.String("event", "watcher.failed"),
 			slog.String("root_uri", uri),
 			slog.Any("error", err),

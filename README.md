@@ -168,7 +168,16 @@ The default level is `info`. Set the `MCP_TASKFILE_LOG_LEVEL` environment variab
 MCP_TASKFILE_LOG_LEVEL=debug mcp-taskfile-server
 ```
 
-> Mirroring selected log lines to the connected MCP client via the [`logging` capability](https://modelcontextprotocol.io/specification/2025-11-25/server/logging) is tracked in [#98](https://github.com/rsclarke/mcp-taskfile-server/issues/98); today the server only logs to stderr.
+### MCP Logging Capability
+
+In addition to writing to stderr, the server advertises the MCP [`logging` capability](https://modelcontextprotocol.io/specification/2025-11-25/server/logging) and mirrors every record through the active session as a `notifications/message` notification using the Go SDK's [`mcp.LoggingHandler`](https://pkg.go.dev/github.com/modelcontextprotocol/go-sdk/mcp#LoggingHandler). The two sinks are independent:
+
+- **Stderr** is the source of truth and is gated by `MCP_TASKFILE_LOG_LEVEL`.
+- **MCP forwarding** is gated by the client-set threshold via `logging/setLevel`. Until the client raises the level, the SDK suppresses every record, so connecting clients see no log noise unless they opt in.
+
+The structured attributes (`event`, `root_uri`, `tool_name`, `error`, etc.) are forwarded verbatim as the notification's `data` payload so clients can filter on them. The MCP arm is wired in only after the client handshake completes; records emitted earlier reach stderr alone.
+
+> **Note:** the server is built around a single MCP session per process — `Server.Run` over stdio binds exactly one — so the in-band logging stream is always unambiguously scoped to "this client". Multi-tenant HTTP deployments are out of scope today; if added, the recommended pattern is one `*mcp.Server` per session via [`NewStreamableHTTPHandler`'s `getServer` factory](https://pkg.go.dev/github.com/modelcontextprotocol/go-sdk/mcp#NewStreamableHTTPHandler), which preserves this 1:1 invariant.
 
 ## Error Handling
 

@@ -241,7 +241,7 @@ func (s *Server) syncTools() error {
 	s.mu.Unlock()
 
 	// Phase 2: pure planning — no lock held.
-	plan := buildToolPlan(snap, s.logger)
+	plan := buildToolPlan(snap, s.log())
 	stale, added := diffTools(oldTools, plan.tools)
 
 	// Phase 3: validate generation, apply MCP side effects, and commit

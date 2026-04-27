@@ -3,6 +3,7 @@ package taskfileserver
 import (
 	"log/slog"
 	"sync"
+	"sync/atomic"
 
 	"github.com/go-task/task/v3/taskfile/ast"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -44,9 +45,16 @@ type Server struct {
 	toolRegistry    toolRegistry
 	registeredTools map[string]registeredTool
 	watchers        *watcherManager
-	logger          *slog.Logger
+	logger          atomic.Pointer[slog.Logger]
 	mu              sync.Mutex
 	generation      uint64
+}
+
+// log returns the current logger. It is safe to call from any goroutine
+// and never returns nil; New seeds the field with a discard logger and
+// SetLogger preserves that invariant.
+func (s *Server) log() *slog.Logger {
+	return s.logger.Load()
 }
 
 // toolRootSnapshot is an immutable per-root view captured under lock so
