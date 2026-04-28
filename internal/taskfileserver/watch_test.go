@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/rsclarke/mcp-taskfile-server/internal/roots"
+	"github.com/rsclarke/mcp-taskfile-server/internal/watch"
 )
 
 func TestLoadRoot_WatchTaskfilesIncludesTransitive(t *testing.T) {
@@ -276,7 +277,7 @@ func TestWatchRootTaskfiles_CancelStops(t *testing.T) {
 	done := make(chan error, 1)
 
 	go func() {
-		done <- s.watchRootTaskfiles(ctx, uri)
+		done <- watch.Watch(ctx, s, s.log, uri)
 	}()
 
 	time.Sleep(50 * time.Millisecond)
@@ -285,10 +286,10 @@ func TestWatchRootTaskfiles_CancelStops(t *testing.T) {
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Errorf("watchRootTaskfiles returned error: %v", err)
+			t.Errorf("watch.Watch returned error: %v", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("watchRootTaskfiles did not stop after context cancellation")
+		t.Fatal("watch.Watch did not stop after context cancellation")
 	}
 }
 
@@ -301,7 +302,7 @@ func TestServerShutdown_StopsActiveWatchersAndIsIdempotent(t *testing.T) {
 	s := newServerForDir(t, dir)
 	s.restartWatchers(context.Background())
 
-	if got := s.watchers.active(); got == 0 {
+	if got := s.watchers.Active(); got == 0 {
 		t.Fatalf("expected at least one active watcher, got %d", got)
 	}
 
@@ -316,10 +317,10 @@ func TestServerShutdown_StopsActiveWatchersAndIsIdempotent(t *testing.T) {
 		t.Fatal("Shutdown did not return in time")
 	}
 
-	if got := s.watchers.active(); got != 0 {
+	if got := s.watchers.Active(); got != 0 {
 		t.Fatalf("expected 0 active watchers after Shutdown, got %d", got)
 	}
-	if !s.watchers.isShuttingDown() {
+	if !s.watchers.IsShuttingDown() {
 		t.Fatal("expected watcher manager to remain in shutting-down state after Shutdown")
 	}
 
@@ -336,7 +337,7 @@ func TestServerShutdown_StopsActiveWatchersAndIsIdempotent(t *testing.T) {
 
 	s.restartWatchers(context.Background())
 
-	if got := s.watchers.active(); got != 0 {
+	if got := s.watchers.Active(); got != 0 {
 		t.Fatalf("restartWatchers should be a no-op after Shutdown, got %d active watchers", got)
 	}
 }
@@ -359,7 +360,7 @@ func TestReloadRoot_RemovesTask(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := s.reloadRoot(t.Context(), rootURI); err != nil {
+	if err := s.ReloadRoot(t.Context(), rootURI); err != nil {
 		t.Fatalf("reloadRoot failed: %v", err)
 	}
 
@@ -385,7 +386,7 @@ func TestReloadRoot_RemovesAllPublicTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := s.reloadRoot(t.Context(), rootURI); err != nil {
+	if err := s.ReloadRoot(t.Context(), rootURI); err != nil {
 		t.Fatalf("reloadRoot failed: %v", err)
 	}
 
@@ -410,7 +411,7 @@ func TestReloadRoot_UpdatesChangedTask(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := s.reloadRoot(t.Context(), rootURI); err != nil {
+	if err := s.ReloadRoot(t.Context(), rootURI); err != nil {
 		t.Fatalf("reloadRoot failed: %v", err)
 	}
 
@@ -618,7 +619,7 @@ func TestReconcileRoots_MissingInitialTaskfileLoadsWhenCreatedLater(t *testing.T
 func TestReloadRoot_UnknownURI(t *testing.T) {
 	s := newTestServer(t, "basic")
 
-	err := s.reloadRoot(t.Context(), "file:///nonexistent")
+	err := s.ReloadRoot(t.Context(), "file:///nonexistent")
 	if err == nil {
 		t.Fatal("expected error for unknown URI, got nil")
 	}

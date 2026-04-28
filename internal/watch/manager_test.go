@@ -1,4 +1,4 @@
-package taskfileserver
+package watch
 
 import (
 	"context"
@@ -44,20 +44,20 @@ func (f *fakeWatcherFn) liveChan(uri string) chan struct{} {
 	return f.live[uri]
 }
 
-// waitForActive polls m.active() until it equals want or the deadline
+// waitForActive polls m.Active() until it equals want or the deadline
 // expires.
-func waitForActive(t *testing.T, m *watcherManager, want int) {
+func waitForActive(t *testing.T, m *Manager, want int) {
 	t.Helper()
 	deadline := time.After(2 * time.Second)
 	tick := time.NewTicker(10 * time.Millisecond)
 	defer tick.Stop()
 	for {
-		if got := m.active(); got == want {
+		if got := m.Active(); got == want {
 			return
 		}
 		select {
 		case <-deadline:
-			t.Fatalf("timed out waiting for %d active watchers, have %d", want, m.active())
+			t.Fatalf("timed out waiting for %d active watchers, have %d", want, m.Active())
 		case <-tick.C:
 		}
 	}
@@ -84,12 +84,12 @@ func waitForStart(t *testing.T, fake *fakeWatcherFn, uri string) {
 
 func TestWatcherManager_ApplyAddsAndRemoves(t *testing.T) {
 	fake := newFakeWatcherFn()
-	m := newWatcherManager(fake.run)
-	t.Cleanup(m.shutdown)
+	m := newWithRun(fake.run)
+	t.Cleanup(m.Shutdown)
 
 	ctx := t.Context()
 
-	m.apply(ctx, []string{"a", "b"}, nil)
+	m.Apply(ctx, []string{"a", "b"}, nil)
 	waitForActive(t, m, 2)
 	waitForStart(t, fake, "a")
 	waitForStart(t, fake, "b")
@@ -99,7 +99,7 @@ func TestWatcherManager_ApplyAddsAndRemoves(t *testing.T) {
 	liveA := fake.liveChan("a")
 	liveB := fake.liveChan("b")
 
-	m.apply(ctx, []string{"c"}, []string{"a"})
+	m.Apply(ctx, []string{"c"}, []string{"a"})
 	waitForStart(t, fake, "c")
 
 	// "a" should have been cancelled; "b" must NOT be disturbed.
@@ -128,34 +128,34 @@ func TestWatcherManager_ApplyAddsAndRemoves(t *testing.T) {
 
 func TestWatcherManager_ApplyIsIdempotentForExistingURIs(t *testing.T) {
 	fake := newFakeWatcherFn()
-	m := newWatcherManager(fake.run)
-	t.Cleanup(m.shutdown)
+	m := newWithRun(fake.run)
+	t.Cleanup(m.Shutdown)
 
 	ctx := t.Context()
 
-	m.apply(ctx, []string{"a"}, nil)
+	m.Apply(ctx, []string{"a"}, nil)
 	waitForActive(t, m, 1)
 	waitForStart(t, fake, "a")
 
 	// Re-applying with the same URI in "added" must not start a second
 	// watcher.
-	m.apply(ctx, []string{"a"}, nil)
+	m.Apply(ctx, []string{"a"}, nil)
 	time.Sleep(50 * time.Millisecond)
 
 	if got := fake.startsFor("a"); got != 1 {
 		t.Fatalf("expected exactly one start for 'a', got %d", got)
 	}
-	if got := m.active(); got != 1 {
+	if got := m.Active(); got != 1 {
 		t.Fatalf("expected 1 active watcher, got %d", got)
 	}
 }
 
 func TestWatcherManager_ShutdownStopsAllAndIsIdempotent(t *testing.T) {
 	fake := newFakeWatcherFn()
-	m := newWatcherManager(fake.run)
+	m := newWithRun(fake.run)
 
 	ctx := t.Context()
-	m.apply(ctx, []string{"a", "b", "c"}, nil)
+	m.Apply(ctx, []string{"a", "b", "c"}, nil)
 	waitForActive(t, m, 3)
 	waitForStart(t, fake, "a")
 	waitForStart(t, fake, "b")
@@ -163,7 +163,7 @@ func TestWatcherManager_ShutdownStopsAllAndIsIdempotent(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		m.shutdown()
+		m.Shutdown()
 		close(done)
 	}()
 	select {
@@ -172,14 +172,14 @@ func TestWatcherManager_ShutdownStopsAllAndIsIdempotent(t *testing.T) {
 		t.Fatal("shutdown did not return in time")
 	}
 
-	if got := m.active(); got != 0 {
+	if got := m.Active(); got != 0 {
 		t.Fatalf("expected 0 active watchers after shutdown, got %d", got)
 	}
 
 	// A second shutdown call must not block.
 	done2 := make(chan struct{})
 	go func() {
-		m.shutdown()
+		m.Shutdown()
 		close(done2)
 	}()
 	select {
@@ -189,28 +189,28 @@ func TestWatcherManager_ShutdownStopsAllAndIsIdempotent(t *testing.T) {
 	}
 
 	// apply and reconcile must be no-ops after shutdown.
-	m.apply(ctx, []string{"d"}, nil)
-	m.reconcile(ctx, []string{"e"})
+	m.Apply(ctx, []string{"d"}, nil)
+	m.Reconcile(ctx, []string{"e"})
 	time.Sleep(50 * time.Millisecond)
-	if got := m.active(); got != 0 {
+	if got := m.Active(); got != 0 {
 		t.Fatalf("apply/reconcile should be no-ops after shutdown, got %d active", got)
 	}
 }
 
 func TestWatcherManager_ReconcileDiffsDesiredSet(t *testing.T) {
 	fake := newFakeWatcherFn()
-	m := newWatcherManager(fake.run)
-	t.Cleanup(m.shutdown)
+	m := newWithRun(fake.run)
+	t.Cleanup(m.Shutdown)
 
 	ctx := t.Context()
-	m.reconcile(ctx, []string{"a", "b"})
+	m.Reconcile(ctx, []string{"a", "b"})
 	waitForActive(t, m, 2)
 	waitForStart(t, fake, "a")
 	waitForStart(t, fake, "b")
 
 	liveA := fake.liveChan("a")
 
-	m.reconcile(ctx, []string{"a", "c"})
+	m.Reconcile(ctx, []string{"a", "c"})
 	waitForActive(t, m, 2)
 	waitForStart(t, fake, "c")
 
@@ -232,15 +232,15 @@ func TestWatcherManager_ReconcileDiffsDesiredSet(t *testing.T) {
 
 func TestWatcherManager_DetachesFromRequestContext(t *testing.T) {
 	fake := newFakeWatcherFn()
-	m := newWatcherManager(fake.run)
-	t.Cleanup(m.shutdown)
+	m := newWithRun(fake.run)
+	t.Cleanup(m.Shutdown)
 
 	// Cancel the request-scoped context immediately. The watcher's
 	// own context must be detached and continue to run.
 	reqCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	m.apply(reqCtx, []string{"a"}, nil)
+	m.Apply(reqCtx, []string{"a"}, nil)
 	waitForActive(t, m, 1)
 	waitForStart(t, fake, "a")
 

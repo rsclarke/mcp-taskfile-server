@@ -12,6 +12,7 @@ import (
 	"github.com/rsclarke/mcp-taskfile-server/internal/logging"
 	"github.com/rsclarke/mcp-taskfile-server/internal/roots"
 	"github.com/rsclarke/mcp-taskfile-server/internal/tools"
+	"github.com/rsclarke/mcp-taskfile-server/internal/watch"
 )
 
 // New creates a new Taskfile MCP server. The server starts with a
@@ -22,7 +23,7 @@ func New() *Server {
 		registeredTools: make(map[string]tools.RegisteredTool),
 	}
 	s.logger.Store(slog.New(slog.DiscardHandler))
-	s.watchers = newWatcherManager(s.runRootWatcher)
+	s.watchers = watch.New(s, s.log)
 	return s
 }
 
@@ -220,7 +221,7 @@ func (s *Server) initializeRootsFromSession(ctx context.Context, session *mcp.Se
 
 	syncErr := s.syncTools()
 	if syncErr == nil {
-		s.watchers.apply(ctx, res.added, res.removed)
+		s.watchers.Apply(ctx, res.added, res.removed)
 	}
 	return syncErr
 }
@@ -279,5 +280,5 @@ func (s *Server) HandleRootsChanged(ctx context.Context, req *mcp.RootsListChang
 			slog.Any("error", err),
 		)
 	}
-	s.watchers.apply(ctx, res.added, res.removed)
+	s.watchers.Apply(ctx, res.added, res.removed)
 }

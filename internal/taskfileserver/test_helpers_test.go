@@ -14,6 +14,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/rsclarke/mcp-taskfile-server/internal/roots"
+	"github.com/rsclarke/mcp-taskfile-server/internal/watch"
 )
 
 // loadServerFromFixture creates a Server from a testdata fixture directory.
@@ -87,13 +88,13 @@ func snapshotRoots(s *Server) []string {
 }
 
 // startTestWatchers spawns a per-root watcher goroutine for every loaded
-// root. It mimics what the watcherManager does on a normal startup, but
+// root. It mimics what the watch.Manager does on a normal startup, but
 // without going through the manager so tests can observe the raw
-// watchRootTaskfiles loop.
+// watch.Watch loop.
 func startTestWatchers(ctx context.Context, s *Server) {
 	for _, uri := range snapshotRoots(s) {
 		go func(uri string) {
-			_ = s.watchRootTaskfiles(ctx, uri)
+			_ = watch.Watch(ctx, s, s.log, uri)
 		}(uri)
 	}
 }

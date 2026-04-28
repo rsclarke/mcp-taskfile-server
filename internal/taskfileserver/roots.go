@@ -34,9 +34,9 @@ func (s *Server) disableRootToolsLocked(uri string, root *roots.Root) {
 	s.generation++
 }
 
-// reloadRoot re-creates the task executor for a given canonical root URI and
+// ReloadRoot re-creates the task executor for a given canonical root URI and
 // syncs the global MCP tool set.
-func (s *Server) reloadRoot(ctx context.Context, uri string) error {
+func (s *Server) ReloadRoot(ctx context.Context, uri string) error {
 	s.mu.Lock()
 	root, ok := s.roots[uri]
 	if !ok {

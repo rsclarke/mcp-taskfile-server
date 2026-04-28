@@ -8,6 +8,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/rsclarke/mcp-taskfile-server/internal/roots"
 	"github.com/rsclarke/mcp-taskfile-server/internal/tools"
+	"github.com/rsclarke/mcp-taskfile-server/internal/watch"
 )
 
 // toolRegistry is the subset of *mcp.Server used for tool registration.
@@ -32,7 +33,7 @@ type Server struct {
 	roots           map[string]*roots.Root
 	toolRegistry    toolRegistry
 	registeredTools map[string]tools.RegisteredTool
-	watchers        *watcherManager
+	watchers        *watch.Manager
 	logger          atomic.Pointer[slog.Logger]
 	mu              sync.Mutex
 	generation      uint64

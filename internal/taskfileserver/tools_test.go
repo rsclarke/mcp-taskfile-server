@@ -227,7 +227,7 @@ func TestSyncTools_OrphanedToolOnConcurrentSync(t *testing.T) {
 // TestSnapshotToolState_IsolatedFromRootMutation verifies that a snapshot
 // captured by snapshotToolStateLocked observes the taskfile pointer that
 // was current at snapshot time, even if the underlying *Root is mutated
-// in-place afterwards (as reloadRoot and disableRootToolsLocked do).
+// in-place afterwards (as ReloadRoot and disableRootToolsLocked do).
 // Before snapshotting copied per-root fields by value, this test would
 // have observed a nil taskfile in the snapshot and panicked in the
 // planner.
