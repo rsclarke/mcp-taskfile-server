@@ -1,4 +1,4 @@
-package taskfileserver
+package server
 
 import (
 	"maps"

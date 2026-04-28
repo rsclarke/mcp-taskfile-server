@@ -8,7 +8,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/rsclarke/mcp-taskfile-server/internal/logging"
-	"github.com/rsclarke/mcp-taskfile-server/internal/taskfileserver"
+	"github.com/rsclarke/mcp-taskfile-server/internal/server"
 )
 
 // Build-time variables set via -ldflags.
@@ -18,7 +18,7 @@ var (
 )
 
 func run() error {
-	taskfileServer := taskfileserver.New()
+	taskfileServer := server.New()
 	taskfileServer.SetLogger(logging.NewLogger(serverName, serverVersion))
 	defer taskfileServer.Shutdown()
 
