@@ -78,13 +78,25 @@ func toolNames[V any](tools map[string]V) []string {
 	return names
 }
 
-// snapshotRoots returns a slice of canonical root URIs.
+// snapshotRoots returns a slice of canonical root URIs. It acquires
+// s.mu so it is safe to call while watcher goroutines are reading
+// s.roots concurrently.
 func snapshotRoots(s *Server) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	uris := make([]string, 0, len(s.roots))
 	for uri := range s.roots {
 		uris = append(uris, uri)
 	}
 	return uris
+}
+
+// reconcileWatchersForTest drives watch.Manager.Reconcile against the
+// server's currently loaded roots. Production code uses the diff-based
+// s.watchers.Apply path driven by initializeRoots/replaceRoots; tests
+// that populate s.roots directly use this full-set entry point instead.
+func reconcileWatchersForTest(ctx context.Context, s *Server) {
+	s.watchers.Reconcile(ctx, snapshotRoots(s))
 }
 
 // startTestWatchers spawns a per-root watcher goroutine for every loaded

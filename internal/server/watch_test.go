@@ -300,7 +300,7 @@ func TestServerShutdown_StopsActiveWatchersAndIsIdempotent(t *testing.T) {
 	}
 
 	s := newServerForDir(t, dir)
-	s.restartWatchers(context.Background())
+	reconcileWatchersForTest(context.Background(), s)
 
 	if got := s.watchers.Active(); got == 0 {
 		t.Fatalf("expected at least one active watcher, got %d", got)
@@ -335,10 +335,10 @@ func TestServerShutdown_StopsActiveWatchersAndIsIdempotent(t *testing.T) {
 		t.Fatal("second Shutdown call blocked")
 	}
 
-	s.restartWatchers(context.Background())
+	reconcileWatchersForTest(context.Background(), s)
 
 	if got := s.watchers.Active(); got != 0 {
-		t.Fatalf("restartWatchers should be a no-op after Shutdown, got %d active watchers", got)
+		t.Fatalf("Reconcile should be a no-op after Shutdown, got %d active watchers", got)
 	}
 }
 
@@ -570,7 +570,7 @@ func TestReconcileRoots_MissingInitialTaskfileLoadsWhenCreatedLater(t *testing.T
 	if err := s.syncTools(); err != nil {
 		t.Fatalf("syncTools: %v", err)
 	}
-	s.restartWatchers(t.Context())
+	reconcileWatchersForTest(t.Context(), s)
 
 	root := onlyRoot(t, s)
 	if root.Taskfile != nil {
