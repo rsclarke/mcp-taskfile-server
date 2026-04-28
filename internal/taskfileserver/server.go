@@ -11,6 +11,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/rsclarke/mcp-taskfile-server/internal/logging"
 	"github.com/rsclarke/mcp-taskfile-server/internal/roots"
+	"github.com/rsclarke/mcp-taskfile-server/internal/tools"
 )
 
 // New creates a new Taskfile MCP server. The server starts with a
@@ -18,7 +19,7 @@ import (
 func New() *Server {
 	s := &Server{
 		roots:           make(map[string]*roots.Root),
-		registeredTools: make(map[string]registeredTool),
+		registeredTools: make(map[string]tools.RegisteredTool),
 	}
 	s.logger.Store(slog.New(slog.DiscardHandler))
 	s.watchers = newWatcherManager(s.runRootWatcher)

@@ -1,4 +1,4 @@
-package taskfileserver
+package tools
 
 import (
 	"crypto/sha256"
@@ -13,11 +13,11 @@ const maxToolNameLength = 128
 // invalidToolNameChars matches characters not recommended by the MCP tool name spec.
 var invalidToolNameChars = regexp.MustCompile(`[^a-zA-Z0-9_.\-]`)
 
-// sanitizeToolName converts a candidate tool name into an MCP-valid name.
+// SanitizeToolName converts a candidate tool name into an MCP-valid name.
 // It preserves Task namespace semantics by replacing colons with underscores,
 // strips wildcard (*) segments, replaces any remaining unsupported characters
 // with underscores, and caps the final name at the MCP-recommended length.
-func sanitizeToolName(taskName string) string {
+func SanitizeToolName(taskName string) string {
 	original := taskName
 
 	// Replace colons with underscores
@@ -65,9 +65,9 @@ func countWildcards(taskName string) int {
 	return strings.Count(taskName, "*")
 }
 
-// sanitizeRootPrefix converts a root name or directory basename into a valid
+// SanitizeRootPrefix converts a root name or directory basename into a valid
 // MCP tool name prefix component.
-func sanitizeRootPrefix(name string) string {
+func SanitizeRootPrefix(name string) string {
 	s := invalidToolNameChars.ReplaceAllString(name, "_")
 	s = strings.Trim(s, "_")
 	if s == "" {
@@ -76,14 +76,14 @@ func sanitizeRootPrefix(name string) string {
 	return s
 }
 
-// rootPrefix returns the tool name prefix for a root identified by its
+// RootPrefix returns the tool name prefix for a root identified by its
 // working directory. When there is only one root the prefix is empty;
 // with multiple roots it is derived from the root directory's basename.
-func rootPrefix(workdir string, totalRoots int) string {
+func RootPrefix(workdir string, totalRoots int) string {
 	if totalRoots <= 1 {
 		return ""
 	}
-	return sanitizeRootPrefix(filepath.Base(workdir))
+	return SanitizeRootPrefix(filepath.Base(workdir))
 }
 
 // prefixedToolName returns the tool name with an optional root prefix.

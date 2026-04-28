@@ -2,8 +2,6 @@ package taskfileserver
 
 import (
 	"context"
-	"encoding/json"
-	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -14,17 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-task/task/v3/taskfile/ast"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/rsclarke/mcp-taskfile-server/internal/roots"
 )
-
-// testLogger returns a logger that discards all output. Tests that need
-// to assert on log output should construct their own buffer-backed
-// handler instead.
-func testLogger() *slog.Logger {
-	return slog.New(slog.DiscardHandler)
-}
 
 // loadServerFromFixture creates a Server from a testdata fixture directory.
 func loadServerFromFixture(t *testing.T, name string) *Server {
@@ -77,39 +67,6 @@ func newTestServer(t *testing.T, fixture string) *Server {
 	return s
 }
 
-// schemaProperties marshals a tool's InputSchema to JSON, then unmarshals it
-// to return the properties map. This handles InputSchema being any (e.g. json.RawMessage).
-func schemaProperties(t *testing.T, tool *registeredTool) map[string]any {
-	t.Helper()
-
-	b, err := json.Marshal(tool.InputSchema)
-	if err != nil {
-		t.Fatalf("failed to marshal InputSchema: %v", err)
-	}
-
-	var schema map[string]any
-	if err := json.Unmarshal(b, &schema); err != nil {
-		t.Fatalf("failed to unmarshal InputSchema: %v", err)
-	}
-
-	props, _ := schema["properties"].(map[string]any)
-	return props
-}
-
-// lookupTask finds a task by name in the taskfile or fails the test.
-func lookupTask(t *testing.T, tf *ast.Taskfile, name string) *ast.Task {
-	t.Helper()
-
-	for taskName, taskDef := range tf.Tasks.All(nil) {
-		if taskName == name {
-			return taskDef
-		}
-	}
-
-	t.Fatalf("task %q not found in taskfile", name)
-	return nil
-}
-
 // toolNames returns the sorted keys from a tool map for use in error messages.
 func toolNames[V any](tools map[string]V) []string {
 	names := make([]string, 0, len(tools))
@@ -118,22 +75,6 @@ func toolNames[V any](tools map[string]V) []string {
 	}
 	slices.Sort(names)
 	return names
-}
-
-// snapshotFromServer builds a toolStateSnapshot from the server's current
-// roots without holding the mutex. Intended for tests only.
-func snapshotFromServer(s *Server) toolStateSnapshot {
-	snap := toolStateSnapshot{
-		generation: s.generation,
-		roots:      make(map[string]toolRootSnapshot, len(s.roots)),
-	}
-	for uri, root := range s.roots {
-		snap.roots[uri] = toolRootSnapshot{
-			workdir:  root.Workdir,
-			taskfile: root.Taskfile,
-		}
-	}
-	return snap
 }
 
 // snapshotRoots returns a slice of canonical root URIs.
@@ -185,69 +126,6 @@ func newServerForDir(t *testing.T, dir string) *Server {
 		t.Fatalf("initial syncTools: %v", err)
 	}
 	return s
-}
-
-// schemaRequired extracts the "required" array from a tool's InputSchema.
-func schemaRequired(t *testing.T, tool *registeredTool) []string {
-	t.Helper()
-
-	b, err := json.Marshal(tool.InputSchema)
-	if err != nil {
-		t.Fatalf("failed to marshal InputSchema: %v", err)
-	}
-
-	var schema map[string]any
-	if err := json.Unmarshal(b, &schema); err != nil {
-		t.Fatalf("failed to unmarshal InputSchema: %v", err)
-	}
-
-	rawReq, ok := schema["required"]
-	if !ok {
-		return nil
-	}
-
-	arr, ok := rawReq.([]any)
-	if !ok {
-		return nil
-	}
-
-	result := make([]string, 0, len(arr))
-	for _, v := range arr {
-		if s, ok := v.(string); ok {
-			result = append(result, s)
-		}
-	}
-	return result
-}
-
-func rawToolArguments(t *testing.T, arguments any) json.RawMessage {
-	t.Helper()
-	if arguments == nil {
-		return nil
-	}
-
-	raw, err := json.Marshal(arguments)
-	if err != nil {
-		t.Fatalf("failed to marshal tool arguments: %v", err)
-	}
-	return raw
-}
-
-func callToolHandler(t *testing.T, handler mcp.ToolHandler, name string, arguments any) *mcp.CallToolResult {
-	t.Helper()
-
-	request := &mcp.CallToolRequest{
-		Params: &mcp.CallToolParamsRaw{Name: name},
-	}
-	if raw := rawToolArguments(t, arguments); raw != nil {
-		request.Params.Arguments = raw
-	}
-
-	result, err := handler(t.Context(), request)
-	if err != nil {
-		t.Fatalf("handler returned error: %v", err)
-	}
-	return result
 }
 
 // toolResultText concatenates the text from every TextContent block in a
