@@ -22,13 +22,15 @@ Built using the official [Go MCP SDK](https://github.com/modelcontextprotocol/go
 
 ## Requirements
 
-- Go 1.19 or later
+- Go 1.25 or later
 
 ## Installation
 
-  ```bash
-  go get github.com/rsclarke/mcp-taskfile-server
-  ```
+```bash
+go install github.com/rsclarke/mcp-taskfile-server@latest
+```
+
+This places the `mcp-taskfile-server` binary in `$GOBIN` (or `$GOPATH/bin`).
 
 ## Usage
 
@@ -48,7 +50,9 @@ Each root is expected to be the directory that directly contains the top-level T
 
 Equivalent local file URI aliases are canonicalized before they enter server state, so values such as `file:///repo` and `file://localhost/repo` share a single internal root identity.
 
-When roots change at runtime (`notifications/roots/list_changed`), the server automatically diffs the root set, tears down removed roots (stopping their file watchers and unregistering their tools), and loads any newly added roots.
+When roots change at runtime (`notifications/roots/list_changed`), the server diffs the root set, tears down removed roots (cancelling their per-root watcher goroutine and unregistering their tools), and loads any newly added roots.
+
+Roots whose initial Taskfile load fails are kept as **unloaded placeholders**: the workdir is recorded and the root directory is watched for the standard Taskfile filenames so a Taskfile created or fixed after startup is automatically picked up. Placeholder roots expose zero MCP tools.
 
 ### Dynamic Tool Discovery
 
@@ -141,15 +145,16 @@ This server implements the Model Context Protocol and can be used with any MCP-c
 
 ## Auto Reload
 
-The server resolves each root's Taskfile graph using `go-task`, then watches the parent directories for every local Taskfile in that graph using `fsnotify`. When one of those Taskfiles is modified, added, or removed, the server automatically:
+The server resolves each root's Taskfile graph using `go-task`, then watches the parent directories for every local Taskfile in that graph using `fsnotify`. Each root has its own watcher goroutine, owned by a per-server `watch.Manager`, so adding or removing a root only spawns or cancels that root's watcher and never disturbs the others. When one of the watched Taskfiles is modified, added, or removed, the server automatically:
 
-1. Reloads and re-parses the Taskfile
-2. Diffs the updated task set against currently registered tools
+1. Reloads and re-parses the root's Taskfile graph
+2. Diffs the updated tool set against currently registered tools
 3. Adds new tools and removes stale ones via the MCP SDK
 4. Notifies connected clients of the change (`notifications/tools/list_changed`)
 
-After each reload, the server recomputes the graph-derived watch set so newly included local Taskfiles start being watched and removed ones stop being watched. File system events are debounced (~200 ms) to avoid redundant reloads during rapid edits. The watcher runs for the lifetime of the server and is cleaned up on shutdown.
-If a root Taskfile becomes invalid or is deleted, the server withdraws that root's tools until a valid Taskfile is restored.
+After each reload, the watcher re-reads the root's watch state so newly included local Taskfiles start being watched and removed ones stop being watched. File system events are debounced (~200 ms) to avoid redundant reloads during rapid edits. Watchers run for the lifetime of the root and are cancelled on root removal or server shutdown.
+
+If a root Taskfile becomes invalid or is deleted, the root is replaced with a fresh placeholder that preserves the workdir and watch set but has no loaded Taskfile, so the root's tools are withdrawn until a valid Taskfile is restored.
 
 ## Logging
 
@@ -195,32 +200,71 @@ This server executes arbitrary commands defined in your Taskfile. Only use it in
 
 ## Development
 
-To modify or extend the server:
+### Package Layout
 
-1. **Server Setup**: The MCP server is created using `mcp.NewServer()` with `InitializedHandler` and `RootsListChangedHandler`
-2. **Root Loading**: `HandleInitialized()` calls `ListRoots` to discover directories; `HandleRootsChanged()` diffs and updates the root set via `reconcileRoots()`
-3. **Snapshot/Plan/Apply**: `syncTools()` follows a three-phase pattern — snapshot state under lock, build a tool plan without the lock, then re-acquire the lock to validate the generation and apply changes
-4. **Generation Guard**: Each state mutation increments a generation counter; if another mutator runs concurrently, the stale plan is discarded without touching the MCP server
-5. **Tool Generation**: Each task becomes an MCP tool via `createToolForTask()`
-6. **Variable Extraction**: Task variables are automatically extracted for schema generation
-7. **Handler Creation**: During tool planning, each task gets a per-call handler via `createTaskHandlerForWorkdir()`
-8. **Native Execution**: Tasks are executed using `executor.Run()` from go-task library
+The server is split into small, single-purpose packages under `internal/`:
+
+- **`internal/server`** — Orchestrator. Owns the `*Server` value, the root map, the registered-tool map, the generation counter, and the lifecycle handlers wired into the MCP SDK (`HandleInitialized`, `HandleRootsChanged`).
+- **`internal/roots`** — Loads and represents Taskfile roots. Owns the `Root` value type, URI canonicalisation, and Taskfile graph resolution. Does not depend on the MCP SDK.
+- **`internal/tools`** — Pure planning. Translates root snapshots into MCP-shaped tools, handles name sanitisation, collision detection, multi-root prefixing, wildcard `MATCH` schemas, and the plan/diff that the orchestrator applies.
+- **`internal/exec`** — Per-call task execution handlers, including stdout/stderr capture and the status/stream `TextContent` blocks returned to clients.
+- **`internal/watch`** — Per-root fsnotify watcher lifecycle. A `watch.Manager` spawns at most one goroutine per root URI and exposes `Apply` / `Reconcile` / `Shutdown`.
+- **`internal/logging`** — Structured logging primitives: stderr handler construction, the MCP `logging` arm, and a `FanoutHandler` that mirrors records to both sinks.
+
+### Lifecycle
+
+1. **Server Setup**: The MCP server is created with `mcp.NewServer()` using `InitializedHandler` and `RootsListChangedHandler`. The orchestrator is constructed with `server.New()` and attached to the MCP server via `SetToolRegistry`.
+2. **Logger Wiring**: `SetLogger()` swaps the active `*slog.Logger` atomically; `HandleInitialized()` extends it with the MCP arm bound to the active session so subsequent records reach the client through `notifications/message`.
+3. **Root Discovery**: `HandleInitialized()` calls `ListRoots` on the session (falling back to the working directory on `-32601`) and `initializeRoots()` loads them. `HandleRootsChanged()` calls `replaceRoots()` to reconcile the live set against the client's updated list.
+4. **Snapshot / Plan / Apply**: `syncTools()` follows a three-phase pattern — snapshot state under lock, call `tools.BuildPlan` without the lock, then re-acquire the lock, validate the generation, and apply the diff to the MCP registry.
+5. **Generation Guard**: Each state mutation (root add/remove, root reload, placeholder swap) increments a generation counter. If another mutator runs while a plan is being built, the stale plan is discarded — that mutator will produce its own sync.
+6. **Tool Generation**: For each non-internal task, `tools.CreateToolForTask` builds the MCP tool with extracted variables and (for wildcard tasks) a `MATCH` array schema sized to the wildcard count.
+7. **Handler Creation**: During planning, each task gets a per-call handler via `exec.NewHandler(workdir, taskName)` bound to the root's workdir.
+8. **Native Execution**: The handler builds a fresh `task.Executor` per call (silent mode, captured stdout/stderr) and invokes `executor.Run()` from the go-task library, returning a `CallToolResult` with the status/stdout/stderr blocks described above.
+9. **Watching**: `watch.Manager.Apply()` spawns a goroutine per newly added root that runs `watch.Watch()`. On each debounced filesystem event the watcher calls back into the orchestrator via `Server.ReloadRoot()`, which rebuilds the root through `roots.Build()` and triggers another `syncTools()`.
 
 ### Key Components
 
-- **`New()`**: Creates an empty server; roots are loaded after the client handshake
-- **`HandleInitialized()`**: Requests roots from the client, loads each root's Taskfile, syncs tools, and starts file watchers
-- **`HandleRootsChanged()`**: Diffs the current root set against the client's updated list, adding/removing roots and re-syncing tools
-- **`reconcileRoots()`**: Canonicalizes incoming roots, loads new ones, removes stale ones, bumps the generation, syncs tools, and restarts watchers
-- **`loadRoot()` / `unloadRoot()`**: Loads or removes per-root Taskfile data and watch-set state
-- **`loadTaskfileWatchSet()`**: Resolves the local Taskfile graph and derives the Taskfiles and parent directories to watch
-- **`snapshotToolStateLocked()`**: Captures the current root map and generation under lock for use by `buildToolPlan()`
-- **`buildToolPlan()`**: Computes the desired MCP tool set and handlers from a snapshot without mutating the server
-- **`createToolForTask()`**: Generates MCP tool schema from task definition
-- **`createTaskHandlerForWorkdir()`**: Creates per-call execution handlers bound to a root workdir
-- **`diffTools()`**: Compares old registered tools against desired tools and returns stale/added lists
-- **`syncTools()`**: Orchestrates the snapshot/plan/apply cycle with generation validation to safely update registered tools
-- **`watchTaskfiles()`**: Watches the graph-derived Taskfile set for changes with debounced reload
+#### `internal/server`
+
+- **`New()`**: Constructs an empty orchestrator with a discard logger and a fresh `watch.Manager`. Roots are loaded after the client handshake.
+- **`SetLogger()` / `SetToolRegistry()`**: Wire the structured logger and the MCP server (used as the tool registry) into the orchestrator.
+- **`HandleInitialized()`**: Installs the MCP logging arm onto the active logger, then calls `initializeRootsFromSession()`.
+- **`HandleRootsChanged()`**: Lists roots from the session, calls `replaceRoots()`, syncs tools, and applies the per-root watcher diff.
+- **`initializeRoots()` / `replaceRoots()`**: Reconcile the root map against a desired set of MCP roots. Both return a `reconcileResult` with the added/removed canonical URIs so callers can drive `syncTools()` and `watch.Manager.Apply()` outside the lock.
+- **`ReloadRoot()`**: Rebuilds a single root via `roots.Build()` and re-syncs tools. On failure the root is replaced with a placeholder via `disableRootToolsLocked()` so its tools are withdrawn until the Taskfile is restored.
+- **`syncTools()`**: Orchestrates the snapshot/plan/apply cycle with generation validation to safely update registered tools.
+- **`snapshotToolStateLocked()`**: Captures the current root map and generation under lock for use by `tools.BuildPlan`.
+- **`RootWatchState()` / `Shutdown()`**: Implement the `watch.StateProvider` contract; `Shutdown` cancels every per-root watcher and waits for them to exit.
+
+#### `internal/roots`
+
+- **`Build()` / `Load()`**: Resolve a workdir's Taskfile graph, set up a `task.Executor`, and return a populated `*Root`.
+- **`NewUnloaded()`**: Returns a placeholder `*Root` for a directory whose Taskfile cannot currently be loaded; the directory is still watched for the standard Taskfile filenames.
+- **`CanonicalRootURI()` / `DirToURI()`**: Canonicalise local `file://` URIs so equivalent aliases share one identity.
+- **`loadTaskfileWatchSet()`**: Resolves the local Taskfile graph and derives the parent directories and exact Taskfile paths to watch.
+
+#### `internal/tools`
+
+- **`BuildPlan()`**: Computes the desired MCP tool set and handlers from a `StateSnapshot` without mutating the orchestrator; logs and excludes colliding tool names.
+- **`CreateToolForTask()`**: Generates the MCP tool definition, schema, and description for a single task.
+- **`Diff()`**: Compares old registered tools against desired tools by serialized schema bytes and returns stale/added name lists.
+- **Naming helpers**: `RootPrefix()` and the sanitisation helpers implement the rules in [Tool Name Mapping](#tool-name-mapping).
+
+#### `internal/exec`
+
+- **`NewHandler()`**: Returns an `mcp.ToolHandler` bound to a root workdir and task name. The handler resolves wildcard `MATCH` arguments, runs the task with captured streams, and produces the status/stdout/stderr `TextContent` blocks.
+
+#### `internal/watch`
+
+- **`Manager`**: Spawns and tracks per-root watcher goroutines. `Apply()` performs an additive/removal diff; `Reconcile()` converges to a desired URI set; `Shutdown()` cancels every watcher and waits for them to drain.
+- **`Watch()`**: Per-root fsnotify loop. Calls `StateProvider.RootWatchState()` for the directories to subscribe to and the Taskfile paths whose modification triggers a debounced reload via `StateProvider.ReloadRoot()`.
+
+#### `internal/logging`
+
+- **`NewLogger()`**: Stderr JSON `*slog.Logger` gated by `MCP_TASKFILE_LOG_LEVEL` and tagged with `service` / `version`.
+- **`InstallMCP()`**: Wraps an existing logger so each record is also forwarded as an MCP `notifications/message` on the active session.
+- **`FanoutHandler`**: Dispatches a single record to multiple `slog.Handler`s (stderr + MCP) without coupling their lifecycles.
 
 ### Key Dependencies
 
