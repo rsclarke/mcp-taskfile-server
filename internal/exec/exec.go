@@ -1,4 +1,6 @@
-package taskfileserver
+// Package exec assembles MCP tool handlers that run Taskfile tasks via
+// go-task and renders the result as MCP CallToolResult content blocks.
+package exec
 
 import (
 	"bytes"
@@ -14,9 +16,20 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// createTaskHandlerForWorkdir creates a handler function for a specific task.
-// For wildcard tasks, it reconstructs the full task name from the MATCH argument.
-func createTaskHandlerForWorkdir(workdir, taskName string) mcp.ToolHandler {
+// isWildcardTask returns true if the task name contains wildcard segments.
+func isWildcardTask(taskName string) bool {
+	return strings.Contains(taskName, "*")
+}
+
+// countWildcards returns the number of wildcard segments in a task name.
+func countWildcards(taskName string) int {
+	return strings.Count(taskName, "*")
+}
+
+// NewHandler creates a handler function for a specific task in the given
+// working directory. For wildcard tasks, it reconstructs the full task
+// name from the MATCH argument supplied by the caller.
+func NewHandler(workdir, taskName string) mcp.ToolHandler {
 	wildcard := isWildcardTask(taskName)
 	wildcardCount := countWildcards(taskName)
 

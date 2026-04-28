@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-task/task/v3/taskfile/ast"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/rsclarke/mcp-taskfile-server/internal/exec"
 )
 
 // registeredTool wraps an mcp.Tool with its serialized InputSchema bytes
@@ -164,7 +165,7 @@ func buildToolPlan(snap toolStateSnapshot, logger *slog.Logger) toolPlan {
 				workdir:  root.workdir,
 				taskName: taskName,
 				tool:     *tool,
-				handler:  createTaskHandlerForWorkdir(root.workdir, taskName),
+				handler:  exec.NewHandler(root.workdir, taskName),
 			})
 		}
 	}
