@@ -3,7 +3,7 @@ module github.com/rsclarke/mcp-taskfile-server
 go 1.25.8
 
 require (
-	github.com/fsnotify/fsnotify v1.9.0
+	github.com/fsnotify/fsnotify v1.10.0
 	github.com/go-task/task/v3 v3.50.0
 	github.com/modelcontextprotocol/go-sdk v1.6.0
 )
