@@ -127,9 +127,7 @@ func (m *Manager) Apply(baseCtx context.Context, added, removed []string) {
 		if _, ok := m.watchers[uri]; ok {
 			continue
 		}
-		// cancel is stored in rootWatcher.cancel and invoked from
-		// Apply (on removal) or Shutdown; gosec cannot trace this.
-		ctx, cancel := context.WithCancel(parent) //nolint:gosec // cancel is held in rootWatcher.cancel
+		ctx, cancel := context.WithCancel(parent)
 		w := &rootWatcher{cancel: cancel, done: make(chan struct{})}
 		m.watchers[uri] = w
 		spawning = append(spawning, spawn{uri: uri, ctx: ctx, w: w})
