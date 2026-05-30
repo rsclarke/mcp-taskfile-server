@@ -16,6 +16,16 @@ tasks:
     cmds:
       - golangci-lint run --fix
 
+  zizmor:
+    desc: Audit GitHub Actions with zizmor
+    cmds:
+      - zizmor --strict-collection .
+
+  zizmor:fix:
+    desc: Run zizmor safe fixes
+    cmds:
+      - zizmor --fix=safe --strict-collection .
+
   test:
     desc: Run tests
     cmds:
