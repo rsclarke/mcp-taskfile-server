@@ -33,7 +33,7 @@ jobs:
           install-only: true
 
       - name: Install go-task
-        uses: rsclarke/install-task@1dd8d9188e6c417cd9d4a9107941be7740def45f # v3.1.0
+        uses: rsclarke/install-task@2617d00c9ea53e5115ca9313b73f32db5aafba98 # v3.2.0
 
       - name: ci
         run: task ci
