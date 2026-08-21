@@ -5,7 +5,7 @@ go 1.25.10
 require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-task/task/v3 v3.51.1
-	github.com/modelcontextprotocol/go-sdk v1.6.1
+	github.com/modelcontextprotocol/go-sdk v1.7.0
 )
 
 require (
